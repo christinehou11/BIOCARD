@@ -358,17 +358,358 @@ display: none;
 
 <div id="TOC">
 <ul>
-<li><a href="#descriptive-statistics" id="toc-descriptive-statistics">Descriptive Statistics</a>
-<ul>
-<li><a href="#actigraphy-analyses" id="toc-actigraphy-analyses">Actigraphy Analyses</a></li>
-</ul></li>
+<li><a href="#descriptive-statistics" id="toc-descriptive-statistics">Descriptive Statistics</a></li>
+<li><a href="#model-analysis" id="toc-model-analysis">Model
+Analysis</a></li>
 </ul>
 </div>
 
+<pre class="r"><code># Load raw data
+raw_demo &lt;- read_excel(here(&quot;data/BIOCARD_Demographics_2024.08.07_Deidentified.xlsx&quot;), sheet = &quot;BIOCARD_Demographics&quot;)
+raw_dx &lt;- read_excel(here(&quot;data/BIOCARD_DiagnosisData_2024.09.08_Deidentified.xlsx&quot;), sheet = &quot;BIOCARD_DiagnosisData&quot;)
+raw_act &lt;- read_excel(here(&quot;data/actigraphy_data_BIOCARD_8_7_24_from Daniel_Deidentified.xlsx&quot;), sheet = &quot;actigraphy_data_BIOCARD_8_7_24&quot;)
+raw_gene &lt;- read_excel(here(&quot;data/BIOCARD_Genetics_Data_2023.03.28_Deidentified.xlsx&quot;), sheet = &quot;GENETICS_Data&quot;)
+raw_champs &lt;- read_excel(here(&quot;data/BIOCARD_Leisure_Activity_Champs_2023.09.10_other coded_Deidentified.xlsx&quot;), sheet = &quot;BIOCARD_PA_BloodBiomarkers-CHAM&quot;)
+# NTK often stands for NeuroToolKit. NTK is a set of biomarkers used for neurological and neurodegenerative disease research
+raw_ntk &lt;- read_excel(here(&quot;data/BIOCARD_NTK Blood biomarkers_08.09.24_JHU only.xlsx&quot;), sheet = &quot;NTK Datafile to Use_JHU only&quot;)
+raw_vital &lt;- read_excel(here(&quot;data/BIOCARD_Vital_Signs_Sensory_2023.04.17_Deidentified.xlsx&quot;), sheet = &quot;BIOCARD_VITAL_SIGNS_SENSORY&quot;)
+raw_gene_new &lt;- read_excel(here(&quot;data/New participants_BIOCARD ApoE Genotypes 2023-2024_Deidentified.xlsx&quot;), sheet = &quot;Sheet1&quot;)
+
+# Check missingness
+# data %&gt;%
+#   summarise(across(everything(), ~ sum(is.na(.))))
+# md.pattern(data)</code></pre>
+<pre class="r"><code># Demographics data
+# Sex: 1=Male|2=Female
+# Educ: years of education, 12=Min|20=Max|99=Unknown|Blank
+#   no unknown or missing
+# Race: 1=White|2=Black or African American|3=American Indian or Alaska Native|4=Native Hawaiian or Other Pacific Islander|5=Asian|99=Unknown|Blank
+#   no 4 or missing
+# Sex_F: 1=F|0=M
+# Race_White: 1=White|0=Other|99=Missing
+data_demo &lt;- raw_demo %&gt;%
+  select(SUBJECT_ID, SEX, EDUC, RACE) %&gt;%
+  mutate(Sex_F = ifelse(SEX == 2, 1, 0)) %&gt;% 
+  mutate(Race_White = case_when(
+    RACE == 1 ~ 1,
+    RACE %in% c(2,3,4,5) ~ 0,
+    TRUE ~ 99
+  )) %&gt;%
+  select(SUBJECT_ID, Sex_F, Race_White, EDUC) %&gt;%
+  mutate(in_demo = 1)
+# check data
+# data_demo %&gt;% 
+#   select(EDUC, Race_White, Sex_F) %&gt;%
+#   table()
+# data_demo$SUBJECT_ID[duplicated(data_demo$SUBJECT_ID)] 
+# length(unique(data_demo$SUBJECT_ID)) 
+# 474 subjects
+
+# Diagnosis data
+# fup_Dx: 1 if last available (i.e., most recent) ‘DIAGNOSIS’ = MCI or dementia, otherwise 0
+data_dx &lt;- raw_dx %&gt;%
+  select(SUBJECT_ID, VISITNO, AgeAtVisit, DIAGNOSIS, DECAGE) %&gt;%
+  group_by(SUBJECT_ID) %&gt;% 
+  mutate(last_visit = ifelse(AgeAtVisit == max(AgeAtVisit), 1, 0)) %&gt;%
+  ungroup() %&gt;%
+  mutate(fup_Dx = ifelse(DIAGNOSIS %in% c(&quot;DEMENTIA&quot;, &quot;MCI&quot;) &amp; last_visit == 1, 1, 0)) %&gt;%
+  mutate(in_dx = 1)
+# check data
+# table(data_dx$DIAGNOSIS)
+# DEMENTIA, IMPAIRED NOT MCI, MCI, NORMAL 
+# length(unique(data_dx$SUBJECT_ID))
+# 474 subjects
+
+# Blood biomarkers data
+data_ntk &lt;- raw_ntk %&gt;%
+  select(SUBJECT_ID, VISITNO,
+         PTAU181_zscore, AB42AB40_zscore, # AD-specific measures
+         NFL_zscore, YKL40_zscore, sTREM2_zscore, GFAP_zscore, # AD non-specific measures
+         PTAU181_outlier, AB42AB40_outlier, NFL_outlier, YKL40_outlier, sTREM2_outlier, GFAP_outlier,
+         GFAP, NFL, PTAU181, AB42AB40, PTAU181_AB42AB40, sTREM2, YKL40) %&gt;% # outlier indicators for each biomarker measure 
+  mutate(in_ntk = 1)
+# check data
+# length(unique(data_ntk$SUBJECT_ID))
+# 266 subjects
+
+# CHAMPS activity questionnaire data
+low_freq_vars &lt;- c(&quot;B11110a_freq&quot;, &quot;B11120a_freq&quot;, &quot;B11122a_freq&quot;, &quot;B11127a_freq&quot;, &quot;B11128a_freq&quot;, &quot;B11134a_freq&quot;, &quot;B11135a_freq&quot;, &quot;B11139a_freq&quot;)
+high_freq_vars &lt;- c(&quot;B11107a_freq&quot;, &quot;B11109a_freq&quot;, &quot;B11114a_freq&quot;, &quot;B11115a_freq&quot;, &quot;B11116a_freq&quot;, &quot;B11119a_freq&quot;, &quot;B11121a_freq&quot;, &quot;B11123a_freq&quot;, &quot;B11124a_freq&quot;, &quot;B11125a_freq&quot;, &quot;B11126a_freq&quot;, &quot;B11129a_freq&quot;, &quot;B11130a_freq&quot;, &quot;B11131a_freq&quot;, &quot;B11132a_freq&quot;, &quot;B11133a_freq&quot;, &quot;B11136a_freq&quot;, &quot;B11137a_freq&quot;, &quot;B11138a_freq&quot;, &quot;B11140a_freq&quot;)
+# Create three continuous variables reflecting each participant’s frequency of engagement in low intensity physical activities, high intensity physical activities, and all physical activities (regardless of level of intensity)
+data_champs &lt;- raw_champs %&gt;%
+  select(c(SUBJECT_ID, VISITNO, low_freq_vars, high_freq_vars, &quot;B11141a_freq&quot;, &quot;B11141s_CAT&quot;)) %&gt;%
+  mutate(across(all_of(c(low_freq_vars, high_freq_vars, &quot;B11141a_freq&quot;)), as.numeric)) %&gt;%  
+  mutate(
+    LOW_INT_FREQ = rowSums(select(., all_of(low_freq_vars)), na.rm = TRUE) +
+                   ifelse(!is.na(B11141s_CAT) &amp; B11141s_CAT == &quot;Physical-low&quot;, B11141a_freq, 0),
+    HIGH_INT_FREQ = rowSums(select(., all_of(high_freq_vars)), na.rm = TRUE) +
+                    ifelse(!is.na(B11141s_CAT) &amp; B11141s_CAT == &quot;Physical-modhi&quot;, B11141a_freq, 0),
+    ALL_INT_FREQ = LOW_INT_FREQ + HIGH_INT_FREQ
+  ) %&gt;%
+  select(SUBJECT_ID, VISITNO, LOW_INT_FREQ, HIGH_INT_FREQ, ALL_INT_FREQ) %&gt;%
+  mutate(in_champs = 1) %&gt;%
+  group_by(SUBJECT_ID) %&gt;% 
+  mutate(first_champs_visit = ifelse(VISITNO == min(VISITNO), 1, 0))
+# check data
+# length(unique(data_champs$SUBJECT_ID))
+# 259 subjects
+
+# Actigraphy data
+# LTAC10 total average activity counts over the 10 most active hours of the day, averaged across 3 days with valid data
+data_act &lt;- raw_act %&gt;%
+  select(SUBJECT_ID, VISITNO, LTAC10) %&gt;%
+  mutate(in_act = 1) %&gt;%
+  group_by(SUBJECT_ID) %&gt;% 
+  mutate(first_act_visit = ifelse(VISITNO == min(VISITNO), 1, 0))
+# check data
+# length(unique(data_act$SUBJECT_ID))
+# 240 subjects
+
+# Genetics (APOE genetic status) data
+data_gene_new &lt;- raw_gene_new %&gt;%
+  filter(!is.na(SUBJECT_ID)) %&gt;%
+  mutate(APOECODE = APOECODE/10)
+
+data_gene &lt;- raw_gene %&gt;%
+  rbind(data_gene_new) %&gt;%
+  mutate(APOE4 = case_when(
+      APOECODE %in% c(2.2, 2.3, 3.3) ~ 0,  
+      APOECODE %in% c(2.4, 3.4, 4.4) ~ 1,  
+      APOECODE == &quot;&quot; | is.na(APOECODE) ~ NA_real_ 
+    )) %&gt;%
+  mutate(in_gene = 1)
+# check data
+# length(unique(data_gene$SUBJECT_ID))
+# 467 subjects
+
+# Vital signs/ sensory data
+data_vital &lt;- raw_vital %&gt;%
+  select(SUBJECT_ID, VISITNO, BMI) %&gt;%
+  mutate(in_vital = 1)
+# check data
+# length(unique(data_vital$SUBJECT_ID))
+# 394 subjects</code></pre>
+<pre class="r"><code>data_act_merged &lt;- data_act %&gt;%
+  merge(data_dx, by = c(&quot;SUBJECT_ID&quot;, &quot;VISITNO&quot;), all = TRUE) %&gt;%
+  merge(data_ntk, by = c(&quot;SUBJECT_ID&quot;, &quot;VISITNO&quot;), all = TRUE) %&gt;%
+  merge(data_vital, by = c(&quot;SUBJECT_ID&quot;, &quot;VISITNO&quot;), all = TRUE) %&gt;%
+  merge(data_demo, by = &quot;SUBJECT_ID&quot;, all = TRUE) %&gt;%
+  merge(data_gene, by = &quot;SUBJECT_ID&quot;, all = TRUE) %&gt;%
+  arrange(SUBJECT_ID, VISITNO)
+# 474 patients
+
+# Identify patients with MCI or Dementia at the first Actigraphy visit
+excluded_patients &lt;- data_act_merged %&gt;%
+  filter(first_act_visit == 1 &amp; (DIAGNOSIS == &quot;MCI&quot; | DIAGNOSIS == &quot;DEMENTIA&quot;)) %&gt;%
+  pull(SUBJECT_ID)
+# 27 patients
+
+# Include patients in the CHAMPS analysis
+data_champs_clean &lt;- read.csv(here(&quot;processed-data/CHAMPS_clean_data.csv&quot;), 
+                              row.names = 1, check.names = FALSE)
+
+# Include patients with at least one actigraphy assessment
+# define Age_Act as a participant’s age at their baseline/first available Actigraphy assessment 
+# exclude patients with a diagnosis of MCI or dementia at baseline Actigraphy assessment
+data_act_clean &lt;- data_act_merged %&gt;%
+  filter(SUBJECT_ID %in% data_champs_clean$SUBJECT_ID) %&gt;%
+  group_by(SUBJECT_ID) %&gt;%
+  filter(any(in_act == 1)) %&gt;%
+  mutate(Age_Act = ifelse(first_act_visit == 1, AgeAtVisit, NA)) %&gt;%
+  fill(Age_Act, .direction = &quot;downup&quot;) %&gt;%
+  filter(!SUBJECT_ID %in% excluded_patients) %&gt;%
+  ungroup() 
+# length(unique(data_act_clean$SUBJECT_ID))
+# 160 patients
+
+# Identify patients without biomarker info 1.5 years around baseline Actigraphy visit
+no_ntk_at_baseline_visit &lt;- data_act_clean %&gt;%
+  filter(first_act_visit == 1 &amp; is.na(in_ntk)) %&gt;%
+  pull(SUBJECT_ID)
+# 8 patients don&#39;t have biomarker info at the baseline visit
+# 1 out of 8 patients are diagnosed with MCI or Dementia at baseline
+
+# biomarker variables
+ntk_vars = c(&quot;PTAU181_zscore&quot;, &quot;AB42AB40_zscore&quot;, &quot;NFL_zscore&quot;, &quot;YKL40_zscore&quot;,
+             &quot;sTREM2_zscore&quot;, &quot;GFAP_zscore&quot;, &quot;PTAU181_outlier&quot;, &quot;AB42AB40_outlier&quot;,
+             &quot;NFL_outlier&quot;, &quot;YKL40_outlier&quot;, &quot;sTREM2_outlier&quot;, &quot;GFAP_outlier&quot;, &quot;in_ntk&quot;)
+
+ntk_within_window_patients &lt;- data_act_clean %&gt;%
+  filter(SUBJECT_ID %in% no_ntk_at_baseline_visit) %&gt;%
+  mutate(ntk_within_window = ifelse(
+      (abs(AgeAtVisit - Age_Act) &lt;= 1.5) &amp;
+      !is.na(in_ntk), 
+    1, 0
+  )) %&gt;%
+  filter(ntk_within_window == 1) %&gt;%
+  select(c(SUBJECT_ID, all_of(ntk_vars))) %&gt;%
+  group_by(SUBJECT_ID) %&gt;%
+  slice_head(n = 1) %&gt;%
+  ungroup() %&gt;%
+  mutate(first_act_visit = 1)
+# 4 patients
+
+data_act_clean &lt;- data_act_clean %&gt;%
+  filter(!(SUBJECT_ID %in% no_ntk_at_baseline_visit) | 
+           SUBJECT_ID %in% ntk_within_window_patients$SUBJECT_ID) %&gt;%
+  # only include visits from baseline forward for each patient
+  group_by(SUBJECT_ID) %&gt;%
+  mutate(baseline_forward = ifelse(first_act_visit == 1, 1, NA)) %&gt;%
+  fill(baseline_forward, .direction = &quot;down&quot;) %&gt;%
+  filter(baseline_forward == 1) %&gt;%
+  # update biomarker info for patients with missing biomarker at baseline
+  merge(ntk_within_window_patients, all.x = TRUE, 
+        by = c(&quot;SUBJECT_ID&quot;, &quot;first_act_visit&quot;), suffix = c(&quot;_left&quot;, &quot;_right&quot;)) %&gt;%
+   mutate(
+    across(
+      .cols = ends_with(&quot;_left&quot;),  
+      .fns = ~ ifelse(!is.na(.), ., get(str_remove(cur_column(), &quot;_left&quot;) %&gt;% paste0(&quot;_right&quot;))),  
+      .names = &quot;{str_remove(.col, &#39;_left&#39;)}&quot;  
+    )
+  )%&gt;%
+  select(-ends_with(&quot;_left&quot;), -ends_with(&quot;_right&quot;))
+
+# length(unique(data_act_clean$SUBJECT_ID))
+# 157 patients, 923 visits
+
+zscore_cols &lt;- c(&quot;PTAU181_zscore&quot;, &quot;AB42AB40_zscore&quot;, &quot;NFL_zscore&quot;, &quot;YKL40_zscore&quot;, &quot;sTREM2_zscore&quot;, &quot;GFAP_zscore&quot;)
+outlier_cols &lt;- c(&quot;PTAU181_outlier&quot;, &quot;AB42AB40_outlier&quot;, &quot;NFL_outlier&quot;, &quot;YKL40_outlier&quot;, &quot;sTREM2_outlier&quot;, &quot;GFAP_outlier&quot;)
+
+# Replace z-score values with NA if the corresponding outlier column is 1
+data_act_clean &lt;- data_act_clean |&gt; 
+    mutate(across(all_of(zscore_cols), 
+      ~ ifelse(get(paste0(sub(&quot;_zscore&quot;, &quot;&quot;, cur_column()), &quot;_outlier&quot;)) == 1, NA, .)))
+
+# save processed data
+write.csv(data_act_clean, here(&quot;processed-data/Actigraphy_clean_data.csv&quot;))</code></pre>
 <div id="descriptive-statistics" class="section level2">
 <h2>Descriptive Statistics</h2>
-<div id="actigraphy-analyses" class="section level3">
-<h3>Actigraphy Analyses</h3>
+<pre class="r"><code>data_act_clean &lt;- data_act_clean %&gt;%
+  arrange(SUBJECT_ID, VISITNO)
+
+# only contain baseline info for each patient
+data_act_clean_bl &lt;- data_act_clean %&gt;%
+  group_by(SUBJECT_ID) %&gt;%
+  slice_head(n = 1) %&gt;%
+  ungroup()
+
+# only contain complete biomarker info for each patient
+# calculate follow up time based on complete biomarker info
+data_act_clean_ntk &lt;- data_act_clean %&gt;%
+  filter(in_ntk == 1) %&gt;%
+  group_by(SUBJECT_ID) %&gt;%
+  mutate(follow_up_time = max(AgeAtVisit) - Age_Act) %&gt;%
+  fill(follow_up_time, .direction = &quot;downup&quot;) %&gt;%
+  mutate(n_ntk = n()) %&gt;%
+  slice_head(n = 1) %&gt;%
+  ungroup()
+
+data_champs_clean &lt;- data_champs_clean %&gt;%
+  arrange(SUBJECT_ID, VISITNO)
+
+# only contain baseline info for each patient
+data_champs_clean_bl &lt;- data_champs_clean %&gt;%
+  group_by(SUBJECT_ID) %&gt;%
+  slice_head(n = 1) %&gt;%
+  ungroup()
+
+# add champs data to actigraphy data on a patient level
+data_act_clean_champs &lt;- data_act_clean_bl %&gt;%
+  select(c(SUBJECT_ID, Age_Act)) %&gt;%
+  left_join(select(data_champs_clean_bl, SUBJECT_ID, Age_CHAMPS), by = &quot;SUBJECT_ID&quot;) %&gt;%
+  mutate(Age_diff = Age_CHAMPS-Age_Act)
+
+mean_time &lt;- data_act_clean |&gt;
+      group_by(SUBJECT_ID) %&gt;%
+  mutate(cutoff_visit = ifelse(first_act_visit == 0, VISITNO, NA)) %&gt;%
+  fill(cutoff_visit, .direction = &quot;down&quot;) %&gt;% 
+  filter(is.na(cutoff_visit) | VISITNO &lt;= cutoff_visit) %&gt;%
+  select(-cutoff_visit) %&gt;% 
+  ungroup() %&gt;%
+  filter(AgeAtVisit &gt;= Age_Act)
+
+summary_stats &lt;- data.frame(
+  # Total number of participants
+  N = nrow(data_act_clean_bl),
+
+  # Number with a diagnosis of MCI or dementia at last visit
+  N_with_MCI_dementia = sum(data_act_clean_bl$fup_Dx == 1, na.rm = TRUE),
+  
+  # Number of participants with &#39;Subject_ID&#39; ≥ 400
+  N_participants_400 = sum(data_act_clean_bl$SUBJECT_ID &gt;= 400, na.rm = TRUE),
+  
+  # Mean (SD) Age_Act
+  Mean_Age_Act = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_act_clean_bl$Age_Act, na.rm = TRUE), sd(data_act_clean_bl$Age_Act, na.rm = TRUE)),
+  
+  # Range of Age_Act
+  Range_Age_Act = sprintf(&quot;(%.2f, %.2f)&quot;, min(data_act_clean_bl$Age_Act, na.rm = TRUE), max(data_act_clean_bl$Age_Act, na.rm = TRUE)),
+  
+  # N (%) female sex
+  N_female = sum(data_act_clean_bl$Sex_F == 1, na.rm = TRUE),
+  Percent_female = sprintf(&quot;%.2f%%&quot;, (sum(data_act_clean_bl$Sex_F == 1, na.rm = TRUE) / nrow(data_act_clean_bl)) * 100),
+  
+  # Mean (SD) years of education
+  Mean_EDUC = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_act_clean_bl$EDUC, na.rm = TRUE), sd(data_act_clean_bl$EDUC, na.rm = TRUE)),
+  
+  # N (%) White race
+  N_white = sum(data_act_clean_bl$Race_White == 1, na.rm = TRUE),
+  Percent_white = sprintf(&quot;%.2f%%&quot;, (sum(data_act_clean_bl$Race_White == 1, na.rm = TRUE) / nrow(data_act_clean_bl)) * 100),
+  
+  # N (%) APOE4 carriers
+  N_APOE4 = sum(data_act_clean_bl$APOE4 == 1, na.rm = TRUE),
+  Percent_APOE4 = sprintf(&quot;%.2f%%&quot;, (sum(data_act_clean_bl$APOE4 == 1, na.rm = TRUE) / nrow(data_act_clean_bl)) * 100),
+  
+  # Mean (SD) years of Age_CHAMPS - Age_Act
+  Mean_Age_Diff = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_act_clean_champs$Age_diff, na.rm = TRUE), sd(data_act_clean_champs$Age_diff, na.rm = TRUE)),
+  
+  # Range of years of Age_CHAMPS - Age_Act
+  Range_Age_Diff = sprintf(&quot;(%.2f, %.2f)&quot;, min(data_act_clean_champs$Age_diff, na.rm = TRUE), max(data_act_clean_champs$Age_diff, na.rm = TRUE)),
+  
+  # Mean (SD) years of follow-up
+  Mean_Followup = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_act_clean_ntk$follow_up_time, na.rm = TRUE), sd(data_act_clean_ntk$follow_up_time, na.rm = TRUE)),
+  
+  # Range of years of follow-up
+  Range_Followup = sprintf(&quot;(%.2f, %.2f)&quot;, min(data_act_clean_ntk$follow_up_time, na.rm = TRUE), max(data_act_clean_ntk$follow_up_time, na.rm = TRUE)),
+  
+  # Mean (SD) number of blood biomarker measures
+  Mean_Biomarkers = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_act_clean_ntk$n_ntk, na.rm = TRUE), sd(data_act_clean_ntk$n_ntk, na.rm = TRUE)),
+  
+  # Range of number of blood biomarker measures
+  Range_Biomarkers = sprintf(&quot;(%.2f, %.2f)&quot;, min(data_act_clean_ntk$n_ntk, na.rm = TRUE), max(data_act_clean_ntk$n_ntk, na.rm = TRUE)),
+  
+  # Mean (SD) time (in years) 
+  Mean_Time = sprintf(&quot;%.2f (%.2f)&quot;, mean(mean_time$AgeAtVisit - mean_time$Age_Act, na.rm = TRUE), sd(mean_time$AgeAtVisit - mean_time$Age_Act, na.rm = TRUE)),
+  
+  # Mean Range (min, max) time (in years) 
+  Range_Time = sprintf(&quot;(%.2f, %.2f)&quot;, min(mean_time$AgeAtVisit - mean_time$Age_Act, na.rm = TRUE), max(mean_time$AgeAtVisit - mean_time$Age_Act, na.rm = TRUE)),
+  
+  # Mean (SD) LTAC
+  Mean_LTAC = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_act_clean$LTAC10, na.rm = TRUE), sd(data_act_clean$LTAC10, na.rm = TRUE)),
+  
+  # Mean (SD) BMI
+  Mean_BMI = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_act_clean$BMI, na.rm = TRUE), sd(data_act_clean$BMI, na.rm = TRUE)),
+  
+  # Mean (SD) GFAP at baseline CHAMPS
+  Mean_GFAP = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_act_clean_bl[data_act_clean_bl$GFAP_outlier==0,]$GFAP, na.rm = TRUE), sd(data_act_clean_bl[data_act_clean_bl$GFAP_outlier==0,]$GFAP, na.rm = TRUE)),
+  
+  # Mean (SD) NFL at baseline CHAMPS
+  Mean_NFL = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_act_clean_bl[data_act_clean_bl$NFL_outlier==0,]$NFL, na.rm = TRUE), sd(data_act_clean_bl[data_act_clean_bl$NFL_outlier==0,]$NFL, na.rm = TRUE)),
+  
+  # Mean (SD) PTAU181 at baseline CHAMPS
+  Mean_PTAU181 = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_act_clean_bl[data_act_clean_bl$PTAU181_outlier==0,]$PTAU181, na.rm = TRUE), sd(data_act_clean_bl[data_act_clean_bl$PTAU181_outlier==0,]$PTAU181, na.rm = TRUE)),
+  
+  # Mean (SD) AB42AB40 at baseline CHAMPS
+  Mean_AB42AB40 = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_act_clean_bl[data_act_clean_bl$AB42AB40_outlier==0,]$AB42AB40, na.rm = TRUE), sd(data_act_clean_bl[data_act_clean_bl$AB42AB40_outlier==0,]$AB42AB40, na.rm = TRUE)),
+  
+  # Mean (SD) PTAU181_AB42AB40 at baseline CHAMPS
+  Mean_PTAU181_AB42AB40 = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_act_clean_bl[data_act_clean_bl$AB42AB40_outlier==0 &amp; data_act_clean_bl$PTAU181_outlier==0,]$PTAU181_AB42AB40, na.rm = TRUE), sd(data_act_clean_bl[data_act_clean_bl$AB42AB40_outlier==0 &amp; data_act_clean_bl$PTAU181_outlier==0,]$PTAU181_AB42AB40, na.rm = TRUE)),
+  
+  # Mean (SD) sTREM2 at baseline CHAMPS
+  Mean_sTREM2 = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_act_clean_bl[data_act_clean_bl$sTREM2_outlier==0,]$sTREM2, na.rm = TRUE), sd(data_act_clean_bl[data_act_clean_bl$sTREM2_outlier==0,]$sTREM2, na.rm = TRUE)),
+  
+  # Mean (SD) YKL40 at baseline CHAMPS
+  Mean_YKL40 = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_act_clean_bl[data_act_clean_bl$YKL40_outlier==0,]$YKL40, na.rm = TRUE), sd(data_act_clean_bl[data_act_clean_bl$YKL40_outlier==0,]$YKL40, na.rm = TRUE))
+)</code></pre>
 <table>
 <caption>Descriptive Statistics for Participants Included in the
 Actigraphy Analyses</caption>
@@ -483,13 +824,13 @@ over time</td>
 </tr>
 <tr class="odd">
 <td align="left">Mean_Time</td>
-<td align="left">-3.47 (8.97)</td>
+<td align="left">1.77 (1.68)</td>
 <td align="left">Mean (SD) time (in years) between baseline actigraphy
 and associated baseline blood biomarker measure</td>
 </tr>
 <tr class="even">
 <td align="left">Range_Time</td>
-<td align="left">(-21.18, 7.95)</td>
+<td align="left">(0.00, 7.86)</td>
 <td align="left">Range (min, max) time (in years) between baseline
 actigraphy and associated baseline blood biomarker measure</td>
 </tr>
@@ -540,6 +881,342 @@ actigraphy and associated baseline blood biomarker measure</td>
 </tr>
 </tbody>
 </table>
+</div>
+<div id="model-analysis" class="section level2">
+<h2>Model Analysis</h2>
+<pre class="r"><code>library(lme4) # linear mix effect model
+
+data_act_clean_analysis &lt;- data_act_clean |&gt;
+  mutate(time = AgeAtVisit - Age_Act) |&gt;
+  select(-ends_with(&quot;_outlier&quot;)) |&gt;
+  filter(!if_all(ends_with(&quot;_zscore&quot;), is.na)) |&gt;
+  select(SUBJECT_ID, VISITNO, DIAGNOSIS, LTAC10, Age_Act, AgeAtVisit, 
+         Sex_F, APOE4, BMI, time, PTAU181_zscore, AB42AB40_zscore, 
+         NFL_zscore, YKL40_zscore, sTREM2_zscore, GFAP_zscore) |&gt;
+  mutate(Sex_F = factor(Sex_F, levels = c(0,1)), 
+         APOE4 = factor(APOE4, levels = c(0,1)))</code></pre>
+<div id="ab42ab40" class="section level4">
+<h4>AB42AB40</h4>
+<pre class="r"><code>AB42AB40_act_data &lt;- data_act_clean_analysis |&gt;
+  select(-c(PTAU181_zscore, NFL_zscore, YKL40_zscore, sTREM2_zscore, GFAP_zscore)) |&gt;
+  filter(!is.na(AB42AB40_zscore))
+
+AB42AB40_act_model &lt;- lmer(AB42AB40_zscore ~ 
+    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
+    LTAC10:time,
+    data = AB42AB40_act_data)
+
+summary(AB42AB40_act_model)</code></pre>
+<pre><code>Linear mixed model fit by REML [&#39;lmerMod&#39;]
+Formula: AB42AB40_zscore ~ LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time +  
+    (1 | SUBJECT_ID) + LTAC10:time
+   Data: AB42AB40_act_data
+
+REML criterion at convergence: 43.1
+
+Scaled residuals: 
+       Min         1Q     Median         3Q        Max 
+-0.0035414 -0.0011694  0.0002144  0.0008123  0.0035115 
+
+Random effects:
+ Groups     Name        Variance  Std.Dev.
+ SUBJECT_ID (Intercept) 3.157e-01 0.561868
+ Residual               5.414e-06 0.002327
+Number of obs: 10, groups:  SUBJECT_ID, 9
+
+Fixed effects:
+              Estimate Std. Error t value
+(Intercept) -1.125e+01  6.762e+00  -1.664
+LTAC10       5.062e-03  2.028e-03   2.496
+Age_Act     -1.148e-01  6.304e-02  -1.821
+Sex_F1       2.137e+00  7.021e-01   3.044
+APOE41      -2.865e+00  1.174e+00  -2.441
+BMI          1.299e-01  7.220e-02   1.799
+time         4.663e+00  1.520e+00   3.068
+LTAC10:time -1.554e-03  4.768e-04  -3.260
+
+Correlation of Fixed Effects:
+            (Intr) LTAC10 Ag_Act Sex_F1 APOE41 BMI    time  
+LTAC10      -0.678                                          
+Age_Act     -0.286 -0.459                                   
+Sex_F1      -0.516  0.621 -0.366                            
+APOE41       0.255 -0.774  0.706 -0.617                     
+BMI         -0.603  0.262  0.086  0.555 -0.146              
+time        -0.774  0.670 -0.036  0.623 -0.263  0.486       
+LTAC10:time  0.777 -0.653  0.021 -0.625  0.248 -0.513 -0.999
+fit warnings:
+Some predictor variables are on very different scales: consider rescaling</code></pre>
+</div>
+<div id="ptau181" class="section level4">
+<h4>PTAU181</h4>
+<pre class="r"><code>PTAU181_act_data &lt;- data_act_clean_analysis |&gt;
+  select(-c(AB42AB40_zscore, YKL40_zscore, NFL_zscore, sTREM2_zscore, GFAP_zscore)) |&gt;
+  filter(!is.na(PTAU181_zscore))
+
+PTAU181_act_model &lt;- lmer(PTAU181_zscore ~ 
+    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
+    LTAC10:time,
+    data = PTAU181_act_data)
+
+summary(PTAU181_act_model)</code></pre>
+<pre><code>Linear mixed model fit by REML [&#39;lmerMod&#39;]
+Formula: PTAU181_zscore ~ LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time +  
+    (1 | SUBJECT_ID) + LTAC10:time
+   Data: PTAU181_act_data
+
+REML criterion at convergence: 44.4
+
+Scaled residuals: 
+       Min         1Q     Median         3Q        Max 
+-0.0033961 -0.0009109  0.0000268  0.0007877  0.0041585 
+
+Random effects:
+ Groups     Name        Variance  Std.Dev.
+ SUBJECT_ID (Intercept) 6.137e-01 0.783371
+ Residual               1.154e-05 0.003397
+Number of obs: 10, groups:  SUBJECT_ID, 9
+
+Fixed effects:
+              Estimate Std. Error t value
+(Intercept) -1.9048286  9.4278936  -0.202
+LTAC10      -0.0019401  0.0028276  -0.686
+Age_Act      0.1140576  0.0878935   1.298
+Sex_F1      -1.4603428  0.9788842  -1.492
+APOE41       1.5682967  1.6366999   0.958
+BMI          0.0110639  0.1006639   0.110
+time        -1.5020146  2.1187902  -0.709
+LTAC10:time  0.0005050  0.0006647   0.760
+
+Correlation of Fixed Effects:
+            (Intr) LTAC10 Ag_Act Sex_F1 APOE41 BMI    time  
+LTAC10      -0.678                                          
+Age_Act     -0.286 -0.459                                   
+Sex_F1      -0.516  0.621 -0.366                            
+APOE41       0.255 -0.774  0.706 -0.617                     
+BMI         -0.603  0.262  0.086  0.555 -0.146              
+time        -0.774  0.670 -0.036  0.623 -0.263  0.486       
+LTAC10:time  0.777 -0.653  0.021 -0.625  0.248 -0.513 -0.999
+fit warnings:
+Some predictor variables are on very different scales: consider rescaling
+optimizer (nloptwrap) convergence code: 0 (OK)
+unable to evaluate scaled gradient
+Model failed to converge: degenerate  Hessian with 1 negative eigenvalues</code></pre>
+</div>
+<div id="nfl" class="section level4">
+<h4>NFL</h4>
+<pre class="r"><code>NFL_act_data &lt;- data_act_clean_analysis |&gt;
+  select(-c(PTAU181_zscore, AB42AB40_zscore, YKL40_zscore, sTREM2_zscore, GFAP_zscore)) |&gt;
+  filter(!is.na(NFL_zscore))
+
+NFL_act_model &lt;- lmer(NFL_zscore ~ 
+    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
+    LTAC10:time,
+    data = NFL_act_data)
+
+summary(NFL_act_model)</code></pre>
+<pre><code>Linear mixed model fit by REML [&#39;lmerMod&#39;]
+Formula: NFL_zscore ~ LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time +  
+    (1 | SUBJECT_ID) + LTAC10:time
+   Data: NFL_act_data
+
+REML criterion at convergence: 41.7
+
+Scaled residuals: 
+    Min      1Q  Median      3Q     Max 
+-0.9005 -0.2540  0.0952  0.3847  0.5534 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.00     0.0000  
+ Residual               0.15     0.3873  
+Number of obs: 10, groups:  SUBJECT_ID, 9
+
+Fixed effects:
+              Estimate Std. Error t value
+(Intercept) -1.037e+01  4.848e+00  -2.139
+LTAC10      -7.082e-04  1.659e-03  -0.427
+Age_Act      1.845e-01  4.387e-02   4.207
+Sex_F1       3.829e-02  5.447e-01   0.070
+APOE41       8.908e-01  8.086e-01   1.102
+BMI         -1.552e-02  6.246e-02  -0.249
+time         4.551e-01  1.342e+00   0.339
+LTAC10:time -1.373e-04  4.672e-04  -0.294
+
+Correlation of Fixed Effects:
+            (Intr) LTAC10 Ag_Act Sex_F1 APOE41 BMI    time  
+LTAC10      -0.711                                          
+Age_Act     -0.374 -0.247                                   
+Sex_F1      -0.180  0.104 -0.388                            
+APOE41       0.226 -0.630  0.698 -0.548                     
+BMI         -0.126 -0.291 -0.019  0.670 -0.117              
+time        -0.776  0.778  0.119  0.037 -0.183 -0.209       
+LTAC10:time  0.752 -0.773 -0.147  0.045  0.150  0.277 -0.993
+fit warnings:
+Some predictor variables are on very different scales: consider rescaling
+optimizer (nloptwrap) convergence code: 0 (OK)
+boundary (singular) fit: see help(&#39;isSingular&#39;)</code></pre>
+</div>
+<div id="ykl40" class="section level4">
+<h4>YKL40</h4>
+<pre class="r"><code>YKL40_act_data &lt;- data_act_clean_analysis |&gt;
+  select(-c(PTAU181_zscore, AB42AB40_zscore, NFL_zscore, sTREM2_zscore, GFAP_zscore)) |&gt;
+  filter(!is.na(YKL40_zscore))
+
+YKL40_act_model &lt;- lmer(YKL40_zscore ~ 
+    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
+    LTAC10:time,
+    data = YKL40_act_data)
+
+summary(YKL40_act_model)</code></pre>
+<pre><code>Linear mixed model fit by REML [&#39;lmerMod&#39;]
+Formula: YKL40_zscore ~ LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time +  
+    (1 | SUBJECT_ID) + LTAC10:time
+   Data: YKL40_act_data
+
+REML criterion at convergence: 45.5
+
+Scaled residuals: 
+     Min       1Q   Median       3Q      Max 
+-0.76667 -0.37711  0.06738  0.30257  0.78031 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.000    0.000   
+ Residual               1.009    1.005   
+Number of obs: 10, groups:  SUBJECT_ID, 9
+
+Fixed effects:
+              Estimate Std. Error t value
+(Intercept) -0.4039929 12.5732033  -0.032
+LTAC10      -0.0011387  0.0043019  -0.265
+Age_Act      0.0109834  0.1137720   0.097
+Sex_F1       0.8147767  1.4126167   0.577
+APOE41       0.0665888  2.0970392   0.032
+BMI          0.1038986  0.1619982   0.641
+time         0.9044747  3.4796191   0.260
+LTAC10:time -0.0003449  0.0012116  -0.285
+
+Correlation of Fixed Effects:
+            (Intr) LTAC10 Ag_Act Sex_F1 APOE41 BMI    time  
+LTAC10      -0.711                                          
+Age_Act     -0.374 -0.247                                   
+Sex_F1      -0.180  0.104 -0.388                            
+APOE41       0.226 -0.630  0.698 -0.548                     
+BMI         -0.126 -0.291 -0.019  0.670 -0.117              
+time        -0.776  0.778  0.119  0.037 -0.183 -0.209       
+LTAC10:time  0.752 -0.773 -0.147  0.045  0.150  0.277 -0.993
+fit warnings:
+Some predictor variables are on very different scales: consider rescaling
+optimizer (nloptwrap) convergence code: 0 (OK)
+boundary (singular) fit: see help(&#39;isSingular&#39;)</code></pre>
+</div>
+<div id="strem2" class="section level4">
+<h4>sTREM2</h4>
+<pre class="r"><code>sTREM2_act_data &lt;- data_act_clean_analysis |&gt;
+  select(-c(PTAU181_zscore, AB42AB40_zscore, YKL40_zscore, NFL_zscore, GFAP_zscore)) |&gt;
+  filter(!is.na(sTREM2_zscore))
+
+sTREM2_act_model &lt;- lmer(sTREM2_zscore ~ 
+    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
+    LTAC10:time,
+    data = sTREM2_act_data)
+
+summary(sTREM2_act_model)</code></pre>
+<pre><code>Linear mixed model fit by REML [&#39;lmerMod&#39;]
+Formula: sTREM2_zscore ~ LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time +  
+    (1 | SUBJECT_ID) + LTAC10:time
+   Data: sTREM2_act_data
+
+REML criterion at convergence: 42.7
+
+Scaled residuals: 
+    Min      1Q  Median      3Q     Max 
+-0.8749 -0.2552  0.1069  0.3763  0.5442 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.0000   0.0000  
+ Residual               0.2588   0.5087  
+Number of obs: 10, groups:  SUBJECT_ID, 9
+
+Fixed effects:
+              Estimate Std. Error t value
+(Intercept) 11.2559484  6.3677186   1.768
+LTAC10      -0.0008860  0.0021787  -0.407
+Age_Act     -0.0406340  0.0576200  -0.705
+Sex_F1      -0.3226823  0.7154220  -0.451
+APOE41      -1.1529416  1.0620488  -1.086
+BMI         -0.1827413  0.0820443  -2.227
+time        -2.0881997  1.7622586  -1.185
+LTAC10:time  0.0006224  0.0006136   1.014
+
+Correlation of Fixed Effects:
+            (Intr) LTAC10 Ag_Act Sex_F1 APOE41 BMI    time  
+LTAC10      -0.711                                          
+Age_Act     -0.374 -0.247                                   
+Sex_F1      -0.180  0.104 -0.388                            
+APOE41       0.226 -0.630  0.698 -0.548                     
+BMI         -0.126 -0.291 -0.019  0.670 -0.117              
+time        -0.776  0.778  0.119  0.037 -0.183 -0.209       
+LTAC10:time  0.752 -0.773 -0.147  0.045  0.150  0.277 -0.993
+fit warnings:
+Some predictor variables are on very different scales: consider rescaling
+optimizer (nloptwrap) convergence code: 0 (OK)
+boundary (singular) fit: see help(&#39;isSingular&#39;)</code></pre>
+</div>
+<div id="gfap" class="section level4">
+<h4>GFAP</h4>
+<pre class="r"><code>GFAP_act_data &lt;- data_act_clean_analysis |&gt;
+  select(-c(PTAU181_zscore, AB42AB40_zscore, YKL40_zscore, NFL_zscore, sTREM2_zscore)) |&gt;
+  filter(!is.na(GFAP_zscore))
+
+GFAP_act_model &lt;- lmer(GFAP_zscore ~ 
+    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
+    LTAC10:time,
+    data = GFAP_act_data)
+
+summary(GFAP_act_model)</code></pre>
+<pre><code>Linear mixed model fit by REML [&#39;lmerMod&#39;]
+Formula: GFAP_zscore ~ LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time +  
+    (1 | SUBJECT_ID) + LTAC10:time
+   Data: GFAP_act_data
+
+REML criterion at convergence: 40.7
+
+Scaled residuals: 
+    Min      1Q  Median      3Q     Max 
+-0.8353 -0.2557  0.1053  0.3715  0.5404 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.00000  0.0000  
+ Residual               0.09224  0.3037  
+Number of obs: 10, groups:  SUBJECT_ID, 9
+
+Fixed effects:
+              Estimate Std. Error t value
+(Intercept) -9.8421127  3.8015962  -2.589
+LTAC10       0.0008358  0.0013007   0.643
+Age_Act      0.1211859  0.0343998   3.523
+Sex_F1       0.1759129  0.4271146   0.412
+APOE41       0.9530066  0.6340545   1.503
+BMI         -0.0227418  0.0489813  -0.464
+time         0.3158711  1.0520873   0.300
+LTAC10:time -0.0001530  0.0003663  -0.418
+
+Correlation of Fixed Effects:
+            (Intr) LTAC10 Ag_Act Sex_F1 APOE41 BMI    time  
+LTAC10      -0.711                                          
+Age_Act     -0.374 -0.247                                   
+Sex_F1      -0.180  0.104 -0.388                            
+APOE41       0.226 -0.630  0.698 -0.548                     
+BMI         -0.126 -0.291 -0.019  0.670 -0.117              
+time        -0.776  0.778  0.119  0.037 -0.183 -0.209       
+LTAC10:time  0.752 -0.773 -0.147  0.045  0.150  0.277 -0.993
+fit warnings:
+Some predictor variables are on very different scales: consider rescaling
+optimizer (nloptwrap) convergence code: 0 (OK)
+boundary (singular) fit: see help(&#39;isSingular&#39;)</code></pre>
 </div>
 </div>
 

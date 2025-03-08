@@ -249,7 +249,7 @@ data_champs_clean <- data_champs_clean |>
                   ~ ifelse(get(paste0(sub("_zscore", "", cur_column()), "_outlier")) == 1, NA, .)))
 
 # save processed data
-write.csv(data_champs_clean, "processed-data/CHAMPS_clean_data.csv")
+write.csv(data_champs_clean, here("processed-data/CHAMPS_clean_data.csv"))
 ```
 
 ## Descriptive Statistics
@@ -331,7 +331,7 @@ summary_stats <- data.frame(
   Mean_HI_INT = sprintf("%.2f (%.2f)", mean(data_champs_clean$HIGH_INT_FREQ, na.rm = TRUE), sd(data_champs_clean$HIGH_INT_FREQ, na.rm = TRUE)),
   
   # Mean (SD) ALL_INT_FREQ
-  Mean_ALL_INT = sprintf("%.2f (%.2f)", mean(data_champs_clean$HIGH_INT_FREQ, na.rm = TRUE), sd(data_champs_clean$HIGH_INT_FREQ, na.rm = TRUE)),
+  Mean_ALL_INT = sprintf("%.2f (%.2f)", mean(data_champs_clean$ALL_INT_FREQ, na.rm = TRUE), sd(data_champs_clean$ALL_INT_FREQ, na.rm = TRUE)),
   
   # Mean (SD) BMI
   Mean_BMI = sprintf("%.2f (%.2f)", mean(data_champs_clean$BMI, na.rm = TRUE), sd(data_champs_clean$BMI, na.rm = TRUE)),
@@ -396,3 +396,10 @@ colnames(summary_stats) = c("Participants in analyses", "")
 summary_stats %>%
   kable(caption = "Descriptive Statistics for Participants Included in the CHAMPS Analyses")
 ```
+
+## Model Analysis
+
+```{r}
+
+```
+

@@ -8,7 +8,7 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = F, message = FALSE, warning = FALSE,
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, comment = NA,
                       fig.align = "center", fig.height = 6, fig.width = 12)
 library(readxl)
 library(tidyverse)
@@ -18,7 +18,7 @@ library(here)
 library(kableExtra)
 ```
 
-```{r}
+```{r load raw data}
 # Load raw data
 raw_demo <- read_excel(here("data/BIOCARD_Demographics_2024.08.07_Deidentified.xlsx"), sheet = "BIOCARD_Demographics")
 raw_dx <- read_excel(here("data/BIOCARD_DiagnosisData_2024.09.08_Deidentified.xlsx"), sheet = "BIOCARD_DiagnosisData")
@@ -36,9 +36,7 @@ raw_gene_new <- read_excel(here("data/New participants_BIOCARD ApoE Genotypes 20
 # md.pattern(data)
 ```
 
-```{r}
-# Clean data
-
+```{r data clean}
 # Demographics data
 # Sex: 1=Male|2=Female
 # Educ: years of education, 12=Min|20=Max|99=Unknown|Blank
@@ -151,9 +149,7 @@ data_vital <- raw_vital %>%
 # 394 subjects
 ```
 
-```{r}
-# Data merge
-# Actigraphy analysis
+```{r actigraphy data merge}
 data_act_merged <- data_act %>%
   merge(data_dx, by = c("SUBJECT_ID", "VISITNO"), all = TRUE) %>%
   merge(data_ntk, by = c("SUBJECT_ID", "VISITNO"), all = TRUE) %>%
@@ -246,13 +242,12 @@ data_act_clean <- data_act_clean |>
       ~ ifelse(get(paste0(sub("_zscore", "", cur_column()), "_outlier")) == 1, NA, .)))
 
 # save processed data
-write.csv(data_act_clean, "processed-data/Actigraphy_clean_data.csv")
+write.csv(data_act_clean, here("processed-data/Actigraphy_clean_data.csv"))
 ```
 
 ## Descriptive Statistics
 
-### Actigraphy Analyses
-```{r}
+```{r descriptive analysis}
 data_act_clean <- data_act_clean %>%
   arrange(SUBJECT_ID, VISITNO)
 
@@ -287,6 +282,15 @@ data_act_clean_champs <- data_act_clean_bl %>%
   select(c(SUBJECT_ID, Age_Act)) %>%
   left_join(select(data_champs_clean_bl, SUBJECT_ID, Age_CHAMPS), by = "SUBJECT_ID") %>%
   mutate(Age_diff = Age_CHAMPS-Age_Act)
+
+mean_time <- data_act_clean |>
+      group_by(SUBJECT_ID) %>%
+  mutate(cutoff_visit = ifelse(first_act_visit == 0, VISITNO, NA)) %>%
+  fill(cutoff_visit, .direction = "down") %>% 
+  filter(is.na(cutoff_visit) | VISITNO <= cutoff_visit) %>%
+  select(-cutoff_visit) %>% 
+  ungroup() %>%
+  filter(AgeAtVisit >= Age_Act)
 
 summary_stats <- data.frame(
   # Total number of participants
@@ -338,10 +342,10 @@ summary_stats <- data.frame(
   Range_Biomarkers = sprintf("(%.2f, %.2f)", min(data_act_clean_ntk$n_ntk, na.rm = TRUE), max(data_act_clean_ntk$n_ntk, na.rm = TRUE)),
   
   # Mean (SD) time (in years) 
-  Mean_Time = sprintf("%.2f (%.2f)", mean(data_act_clean$AgeAtVisit - data_act_clean$Age_Act, na.rm = TRUE), sd(data_act_clean$AgeAtVisit - data_act_clean$Age_Act, na.rm = TRUE)),
+  Mean_Time = sprintf("%.2f (%.2f)", mean(mean_time$AgeAtVisit - mean_time$Age_Act, na.rm = TRUE), sd(mean_time$AgeAtVisit - mean_time$Age_Act, na.rm = TRUE)),
   
   # Mean Range (min, max) time (in years) 
-  Range_Time = sprintf("(%.2f, %.2f)", min(data_act_clean$AgeAtVisit - data_act_clean$Age_Act, na.rm = TRUE), max(data_act_clean$AgeAtVisit - data_act_clean$Age_Act, na.rm = TRUE)),
+  Range_Time = sprintf("(%.2f, %.2f)", min(mean_time$AgeAtVisit - mean_time$Age_Act, na.rm = TRUE), max(mean_time$AgeAtVisit - mean_time$Age_Act, na.rm = TRUE)),
   
   # Mean (SD) LTAC
   Mean_LTAC = sprintf("%.2f (%.2f)", mean(data_act_clean$LTAC10, na.rm = TRUE), sd(data_act_clean$LTAC10, na.rm = TRUE)),
@@ -372,7 +376,7 @@ summary_stats <- data.frame(
 )
 ```
 
-```{r}
+```{r print out, echo=FALSE}
 summary_stats <- as.data.frame(t(summary_stats))
 summary_stats$Variable = c("N", 
                            "N with a diagnosis of MCI or dementia at last visit (‘fup_Dx’ = 1)",
@@ -407,4 +411,114 @@ colnames(summary_stats) = c("Participants in analyses", "")
 
 summary_stats %>%
   kable(caption = "Descriptive Statistics for Participants Included in the Actigraphy Analyses")
+```
+
+## Model Analysis
+
+```{r model analysis act data prep}
+library(lme4) # linear mix effect model
+
+data_act_clean_analysis <- data_act_clean |>
+  mutate(time = AgeAtVisit - Age_Act) |>
+  select(-ends_with("_outlier")) |>
+  filter(!if_all(ends_with("_zscore"), is.na)) |>
+  select(SUBJECT_ID, VISITNO, DIAGNOSIS, LTAC10, Age_Act, AgeAtVisit, 
+         Sex_F, APOE4, BMI, time, PTAU181_zscore, AB42AB40_zscore, 
+         NFL_zscore, YKL40_zscore, sTREM2_zscore, GFAP_zscore) |>
+  mutate(Sex_F = factor(Sex_F, levels = c(0,1)), 
+         APOE4 = factor(APOE4, levels = c(0,1)))
+```
+
+```{r save processed act data, echo=FALSE}
+write.csv(data_act_clean_analysis, here("processed-data/Actigraphy_clean_data.csv"))
+```
+
+#### AB42AB40
+
+```{r AB42AB40}
+AB42AB40_act_data <- data_act_clean_analysis |>
+  select(-c(PTAU181_zscore, NFL_zscore, YKL40_zscore, sTREM2_zscore, GFAP_zscore)) |>
+  filter(!is.na(AB42AB40_zscore))
+
+AB42AB40_act_model <- lmer(AB42AB40_zscore ~ 
+    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
+    LTAC10:time,
+    data = AB42AB40_act_data)
+
+summary(AB42AB40_act_model)
+```
+
+#### PTAU181
+
+```{r PTAU181}
+PTAU181_act_data <- data_act_clean_analysis |>
+  select(-c(AB42AB40_zscore, YKL40_zscore, NFL_zscore, sTREM2_zscore, GFAP_zscore)) |>
+  filter(!is.na(PTAU181_zscore))
+
+PTAU181_act_model <- lmer(PTAU181_zscore ~ 
+    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
+    LTAC10:time,
+    data = PTAU181_act_data)
+
+summary(PTAU181_act_model)
+```
+
+#### NFL
+
+```{r NFL}
+NFL_act_data <- data_act_clean_analysis |>
+  select(-c(PTAU181_zscore, AB42AB40_zscore, YKL40_zscore, sTREM2_zscore, GFAP_zscore)) |>
+  filter(!is.na(NFL_zscore))
+
+NFL_act_model <- lmer(NFL_zscore ~ 
+    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
+    LTAC10:time,
+    data = NFL_act_data)
+
+summary(NFL_act_model)
+```
+
+#### YKL40
+
+```{r YKL40}
+YKL40_act_data <- data_act_clean_analysis |>
+  select(-c(PTAU181_zscore, AB42AB40_zscore, NFL_zscore, sTREM2_zscore, GFAP_zscore)) |>
+  filter(!is.na(YKL40_zscore))
+
+YKL40_act_model <- lmer(YKL40_zscore ~ 
+    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
+    LTAC10:time,
+    data = YKL40_act_data)
+
+summary(YKL40_act_model)
+```
+
+#### sTREM2
+
+```{r sTREM2}
+sTREM2_act_data <- data_act_clean_analysis |>
+  select(-c(PTAU181_zscore, AB42AB40_zscore, YKL40_zscore, NFL_zscore, GFAP_zscore)) |>
+  filter(!is.na(sTREM2_zscore))
+
+sTREM2_act_model <- lmer(sTREM2_zscore ~ 
+    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
+    LTAC10:time,
+    data = sTREM2_act_data)
+
+summary(sTREM2_act_model)
+```
+
+#### GFAP
+
+```{r GFAP}
+GFAP_act_data <- data_act_clean_analysis |>
+  select(-c(PTAU181_zscore, AB42AB40_zscore, YKL40_zscore, NFL_zscore, sTREM2_zscore)) |>
+  filter(!is.na(GFAP_zscore))
+
+GFAP_act_model <- lmer(GFAP_zscore ~ 
+    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
+    LTAC10:time,
+    data = GFAP_act_data)
+
+summary(GFAP_act_model)
 ```
