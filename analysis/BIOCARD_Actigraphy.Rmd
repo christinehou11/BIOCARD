@@ -1,5 +1,5 @@
 ---
-title: "BIOCARD Data Analysis"
+title: "BIOCARD Data Analysis - Actigraphy"
 author: "Yuhan Xiao, Christine Hou"
 date: "`r Sys.Date()`"
 output:
@@ -16,6 +16,9 @@ library(mice)
 library(knitr)
 library(here)
 library(kableExtra)
+library(ggplot2)
+library(cowplot)
+library(lmerTest) # mixed linear model
 ```
 
 # Data Wrangling
@@ -418,9 +421,8 @@ summary_stats %>%
 # Model Analysis
 
 ```{r model analysis act data prep}
-library(lmerTest) # linear mix effect model
-
 data_act_clean_analysis <- data_act_clean |>
+  mutate(VISITNO = as.numeric(VISITNO)) |>
   mutate(time = AgeAtVisit - Age_Act) |>
   select(-ends_with("_outlier")) |>
   filter(!if_all(ends_with("_zscore"), is.na)) |>
@@ -433,7 +435,12 @@ data_act_clean_analysis <- data_act_clean |>
         LTAC10_z = (LTAC10 - mean(LTAC10, na.rm = TRUE)) / sd(LTAC10, na.rm = TRUE),
         Age_Act_z = (Age_Act - mean(Age_Act, na.rm = TRUE)) / sd(Age_Act, na.rm = TRUE),
         BMI_z = (BMI - mean(BMI, na.rm = TRUE)) / sd(BMI, na.rm = TRUE)
-    )
+    ) |>
+  left_join(data_champs_clean[, c('SUBJECT_ID','VISITNO', "LOW_INT_FREQ", "HIGH_INT_FREQ","ALL_INT_FREQ")], 
+            by = c('SUBJECT_ID','VISITNO')) |>
+  mutate(LOW_INT_FREQ_z = (LOW_INT_FREQ - mean(LOW_INT_FREQ, na.rm = TRUE)) / sd(LOW_INT_FREQ, na.rm = TRUE),
+        HIGH_INT_FREQ_z = (HIGH_INT_FREQ - mean(HIGH_INT_FREQ, na.rm = TRUE)) / sd(HIGH_INT_FREQ, na.rm = TRUE),
+        ALL_INT_FREQ_z = (ALL_INT_FREQ - mean(ALL_INT_FREQ, na.rm = TRUE)) / sd(ALL_INT_FREQ, na.rm = TRUE))
 ```
 
 ```{r save processed act data, echo=FALSE}
@@ -455,6 +462,59 @@ AB42AB40_act_model <- lmer(AB42AB40_zscore ~
 
 summary(AB42AB40_act_model)
 ```
+
+##### Visualization
+
+```{r AB42AB40 plot, fig.width=14, fig.height=13}
+AB42AB40_act_data_plot <- AB42AB40_act_data |> 
+  mutate(CHAMPS_group_low = ifelse(LOW_INT_FREQ_z >= median(LOW_INT_FREQ_z, na.rm = TRUE), 
+        "LOW_INT_FREQ >= median(LOW_INT_FREQ)", "LOW_INT_FREQ < median(LOW_INT_FREQ)"),
+         CHAMPS_group_high = ifelse(HIGH_INT_FREQ_z >= median(HIGH_INT_FREQ_z, na.rm = TRUE), 
+         "HIGH_INT_FREQ >= median(HIGH_INT_FREQ)", "HIGH_INT_FREQ < median(HIGH_INT_FREQ)"),
+         CHAMPS_group_all = ifelse(ALL_INT_FREQ_z >= median(ALL_INT_FREQ_z, na.rm = TRUE), 
+          "ALL_INT_FREQ >= median(ALL_INT_FREQ)", "ALL_INT_FREQ < median(ALL_INT_FREQ)")) |>
+  filter(if_all(ends_with("_FREQ"), ~ !is.na(.))) |>
+  filter(!is.na(LTAC10_z))
+
+p1 <- ggplot(AB42AB40_act_data_plot, aes(x = time, y = AB42AB40_zscore)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~ CHAMPS_group_low) + 
+  labs(title = "Standardized AB42AB40 Measure Over Time Since Baseline (years)",
+       x = "Time (Years since Baseline)",
+       y = "AB42AB40 zscore",
+       color = "LTAC10 Group",
+       tag = "LOW Intensity\nPhysical Activity") +
+  theme_bw() +
+  theme(aspect.ratio = 0.8)
+
+p2 <- ggplot(AB42AB40_act_data_plot, aes(x = time, y = AB42AB40_zscore)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~ CHAMPS_group_high) + 
+  labs(title = "Standardized AB42AB40 Measure Over Time Since Baseline (years)",
+       x = "Time (Years since Baseline)",
+       y = "AB42AB40 zscore",
+       color = "LTAC10 Group",
+       tag = "HIGH Intensity\nPhysical Activity") +
+  theme_bw() +
+  theme(aspect.ratio = 0.8)
+
+p3 <- ggplot(AB42AB40_act_data_plot, aes(x = time, y = AB42AB40_zscore)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~ CHAMPS_group_all) + 
+  labs(title = "Standardized AB42AB40 Measure Over Time Since Baseline (years)",
+       x = "Time (Years since Baseline)",
+       y = "AB42AB40 zscore",
+       color = "LTAC10 Group",
+       tag = "ALL Intensity\nPhysical Activity") +
+  theme_bw() +
+  theme(aspect.ratio = 0.8)
+
+plot_grid(p1, p2, p3, nrow = 3)
+```
+
 
 ### PTAU181
 

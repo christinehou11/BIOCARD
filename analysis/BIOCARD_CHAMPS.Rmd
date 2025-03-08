@@ -1,5 +1,5 @@
 ---
-title: "BIOCARD Data Analysis"
+title: "BIOCARD Data Analysis - CHAMPS"
 author: "Yuhan Xiao, Christine Hou"
 date: "`r Sys.Date()`"
 output:
