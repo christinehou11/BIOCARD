@@ -358,18 +358,349 @@ display: none;
 
 <div id="TOC">
 <ul>
-<li><a href="#descriptive-statistics" id="toc-descriptive-statistics">Descriptive Statistics</a>
+<li><a href="#data-wrangling" id="toc-data-wrangling">Data
+Wrangling</a></li>
+<li><a href="#descriptive-statistics" id="toc-descriptive-statistics">Descriptive Statistics</a></li>
+<li><a href="#model-analysis" id="toc-model-analysis">Model Analysis</a>
 <ul>
-<li><a href="#champs-analyses" id="toc-champs-analyses">CHAMPS
-Analyses</a></li>
+<li><a href="#ab42ab40" id="toc-ab42ab40">AB42AB40</a></li>
+<li><a href="#ptau181" id="toc-ptau181">PTAU181</a></li>
+<li><a href="#nfl" id="toc-nfl">NFL</a></li>
+<li><a href="#ykl40" id="toc-ykl40">YKL40</a></li>
+<li><a href="#strem2" id="toc-strem2">sTREM2</a></li>
+<li><a href="#gfap" id="toc-gfap">GFAP</a></li>
 </ul></li>
 </ul>
 </div>
 
-<div id="descriptive-statistics" class="section level2">
-<h2>Descriptive Statistics</h2>
-<div id="champs-analyses" class="section level3">
-<h3>CHAMPS Analyses</h3>
+<div id="data-wrangling" class="section level1">
+<h1>Data Wrangling</h1>
+<pre class="r"><code>raw_demo &lt;- read_excel(here(&quot;data/BIOCARD_Demographics_2024.08.07_Deidentified.xlsx&quot;), sheet = &quot;BIOCARD_Demographics&quot;)
+raw_dx &lt;- read_excel(here(&quot;data/BIOCARD_DiagnosisData_2024.09.08_Deidentified.xlsx&quot;), sheet = &quot;BIOCARD_DiagnosisData&quot;)
+raw_act &lt;- read_excel(here(&quot;data/actigraphy_data_BIOCARD_8_7_24_from Daniel_Deidentified.xlsx&quot;), sheet = &quot;actigraphy_data_BIOCARD_8_7_24&quot;)
+raw_gene &lt;- read_excel(here(&quot;data/BIOCARD_Genetics_Data_2023.03.28_Deidentified.xlsx&quot;), sheet = &quot;GENETICS_Data&quot;)
+raw_champs &lt;- read_excel(here(&quot;data/BIOCARD_Leisure_Activity_Champs_2023.09.10_other coded_Deidentified.xlsx&quot;), sheet = &quot;BIOCARD_PA_BloodBiomarkers-CHAM&quot;)
+# NTK often stands for NeuroToolKit. NTK is a set of biomarkers used for neurological and neurodegenerative disease research
+raw_ntk &lt;- read_excel(here(&quot;data/BIOCARD_NTK Blood biomarkers_08.09.24_JHU only.xlsx&quot;), sheet = &quot;NTK Datafile to Use_JHU only&quot;)
+raw_vital &lt;- read_excel(here(&quot;data/BIOCARD_Vital_Signs_Sensory_2023.04.17_Deidentified.xlsx&quot;), sheet = &quot;BIOCARD_VITAL_SIGNS_SENSORY&quot;)
+raw_gene_new &lt;- read_excel(here(&quot;data/New participants_BIOCARD ApoE Genotypes 2023-2024_Deidentified.xlsx&quot;), sheet = &quot;Sheet1&quot;)
+
+# Check missingness
+# data %&gt;%
+#   summarise(across(everything(), ~ sum(is.na(.))))
+# md.pattern(data)</code></pre>
+<pre class="r"><code># Demographics data
+# Sex: 1=Male|2=Female
+# Educ: years of education, 12=Min|20=Max|99=Unknown|Blank
+#   no unknown or missing
+# Race: 1=White|2=Black or African American|3=American Indian or Alaska Native|4=Native Hawaiian or Other Pacific Islander|5=Asian|99=Unknown|Blank
+#   no 4 or missing
+# Sex_F: 1=F|0=M
+# Race_White: 1=White|0=Other|99=Missing
+data_demo &lt;- raw_demo %&gt;%
+  select(SUBJECT_ID, SEX, EDUC, RACE) %&gt;%
+  mutate(Sex_F = ifelse(SEX == 2, 1, 0)) %&gt;% 
+  mutate(Race_White = case_when(
+    RACE == 1 ~ 1,
+    RACE %in% c(2,3,4,5) ~ 0,
+    TRUE ~ 99
+  )) %&gt;%
+  select(SUBJECT_ID, Sex_F, Race_White, EDUC) %&gt;%
+  mutate(in_demo = 1)
+# check data
+# data_demo %&gt;% 
+#   select(EDUC, Race_White, Sex_F) %&gt;%
+#   table()
+# data_demo$SUBJECT_ID[duplicated(data_demo$SUBJECT_ID)] 
+# length(unique(data_demo$SUBJECT_ID)) 
+# 474 subjects
+
+# Diagnosis data
+# fup_Dx: 1 if last available (i.e., most recent) ‘DIAGNOSIS’ = MCI or dementia, otherwise 0
+data_dx &lt;- raw_dx %&gt;%
+  select(SUBJECT_ID, VISITNO, AgeAtVisit, DIAGNOSIS, DECAGE) %&gt;%
+  group_by(SUBJECT_ID) %&gt;% 
+  mutate(last_visit = ifelse(AgeAtVisit == max(AgeAtVisit), 1, 0)) %&gt;%
+  ungroup() %&gt;%
+  mutate(fup_Dx = ifelse(DIAGNOSIS %in% c(&quot;DEMENTIA&quot;, &quot;MCI&quot;) &amp; last_visit == 1, 1, 0)) %&gt;%
+  mutate(in_dx = 1)
+# check data
+# table(data_dx$DIAGNOSIS)
+# DEMENTIA, IMPAIRED NOT MCI, MCI, NORMAL 
+# length(unique(data_dx$SUBJECT_ID))
+# 474 subjects
+
+# Blood biomarkers data
+data_ntk &lt;- raw_ntk %&gt;%
+  select(SUBJECT_ID, VISITNO,
+         PTAU181_zscore, AB42AB40_zscore, # AD-specific measures
+         NFL_zscore, YKL40_zscore, sTREM2_zscore, GFAP_zscore, # AD non-specific measures
+         PTAU181_outlier, AB42AB40_outlier, NFL_outlier, YKL40_outlier, sTREM2_outlier, GFAP_outlier,
+         GFAP, NFL, PTAU181, AB42AB40, PTAU181_AB42AB40, sTREM2, YKL40) %&gt;% # outlier indicators for each biomarker measure 
+  mutate(in_ntk = 1)
+# check data
+# length(unique(data_ntk$SUBJECT_ID))
+# 266 subjects
+
+# CHAMPS activity questionnaire data
+low_freq_vars &lt;- c(&quot;B11110a_freq&quot;, &quot;B11120a_freq&quot;, &quot;B11122a_freq&quot;, &quot;B11127a_freq&quot;, &quot;B11128a_freq&quot;, &quot;B11134a_freq&quot;, &quot;B11135a_freq&quot;, &quot;B11139a_freq&quot;)
+high_freq_vars &lt;- c(&quot;B11107a_freq&quot;, &quot;B11109a_freq&quot;, &quot;B11114a_freq&quot;, &quot;B11115a_freq&quot;, &quot;B11116a_freq&quot;, &quot;B11119a_freq&quot;, &quot;B11121a_freq&quot;, &quot;B11123a_freq&quot;, &quot;B11124a_freq&quot;, &quot;B11125a_freq&quot;, &quot;B11126a_freq&quot;, &quot;B11129a_freq&quot;, &quot;B11130a_freq&quot;, &quot;B11131a_freq&quot;, &quot;B11132a_freq&quot;, &quot;B11133a_freq&quot;, &quot;B11136a_freq&quot;, &quot;B11137a_freq&quot;, &quot;B11138a_freq&quot;, &quot;B11140a_freq&quot;)
+# Create three continuous variables reflecting each participant’s frequency of engagement in low intensity physical activities, high intensity physical activities, and all physical activities (regardless of level of intensity)
+data_champs &lt;- raw_champs %&gt;%
+  select(c(SUBJECT_ID, VISITNO, low_freq_vars, high_freq_vars, &quot;B11141a_freq&quot;, &quot;B11141s_CAT&quot;)) %&gt;%
+  mutate(across(all_of(c(low_freq_vars, high_freq_vars, &quot;B11141a_freq&quot;)), as.numeric)) %&gt;%  
+  mutate(
+    LOW_INT_FREQ = rowSums(select(., all_of(low_freq_vars)), na.rm = TRUE) +
+                   ifelse(!is.na(B11141s_CAT) &amp; B11141s_CAT == &quot;Physical-low&quot;, B11141a_freq, 0),
+    HIGH_INT_FREQ = rowSums(select(., all_of(high_freq_vars)), na.rm = TRUE) +
+                    ifelse(!is.na(B11141s_CAT) &amp; B11141s_CAT == &quot;Physical-modhi&quot;, B11141a_freq, 0),
+    ALL_INT_FREQ = LOW_INT_FREQ + HIGH_INT_FREQ
+  ) %&gt;%
+  select(SUBJECT_ID, VISITNO, LOW_INT_FREQ, HIGH_INT_FREQ, ALL_INT_FREQ) %&gt;%
+  mutate(in_champs = 1) %&gt;%
+  group_by(SUBJECT_ID) %&gt;% 
+  mutate(first_champs_visit = ifelse(VISITNO == min(VISITNO), 1, 0))
+# check data
+# length(unique(data_champs$SUBJECT_ID))
+# 259 subjects
+
+# Actigraphy data
+# LTAC10 total average activity counts over the 10 most active hours of the day, averaged across 3 days with valid data
+data_act &lt;- raw_act %&gt;%
+  select(SUBJECT_ID, VISITNO, LTAC10) %&gt;%
+  mutate(in_act = 1) %&gt;%
+  group_by(SUBJECT_ID) %&gt;% 
+  mutate(first_act_visit = ifelse(VISITNO == min(VISITNO), 1, 0))
+# check data
+# length(unique(data_act$SUBJECT_ID))
+# 240 subjects
+
+# Genetics (APOE genetic status) data
+data_gene_new &lt;- raw_gene_new %&gt;%
+  filter(!is.na(SUBJECT_ID)) %&gt;%
+  mutate(APOECODE = APOECODE/10)
+
+data_gene &lt;- raw_gene %&gt;%
+  rbind(data_gene_new) %&gt;%
+  mutate(APOE4 = case_when(
+      APOECODE %in% c(2.2, 2.3, 3.3) ~ 0,  
+      APOECODE %in% c(2.4, 3.4, 4.4) ~ 1,  
+      APOECODE == &quot;&quot; | is.na(APOECODE) ~ NA_real_ 
+    )) %&gt;%
+  mutate(in_gene = 1)
+# check data
+# length(unique(data_gene$SUBJECT_ID))
+# 467 subjects
+
+# Vital signs/ sensory data
+data_vital &lt;- raw_vital %&gt;%
+  select(SUBJECT_ID, VISITNO, BMI) %&gt;%
+  mutate(in_vital = 1)
+# check data
+# length(unique(data_vital$SUBJECT_ID))
+# 394 subjects</code></pre>
+<pre class="r"><code># format variables to merge on
+format_columns &lt;- c(&quot;SUBJECT_ID&quot;,&quot;VISITNO&quot;)
+data_dx[format_columns] &lt;- lapply(data_dx[format_columns], as.numeric) 
+data_act[format_columns] &lt;- lapply(data_act[format_columns], as.numeric) 
+
+# biomarker variables
+ntk_vars = c(&quot;PTAU181_zscore&quot;, &quot;AB42AB40_zscore&quot;, &quot;NFL_zscore&quot;, &quot;YKL40_zscore&quot;,
+             &quot;sTREM2_zscore&quot;, &quot;GFAP_zscore&quot;, &quot;PTAU181_outlier&quot;, &quot;AB42AB40_outlier&quot;,
+             &quot;NFL_outlier&quot;, &quot;YKL40_outlier&quot;, &quot;sTREM2_outlier&quot;, &quot;GFAP_outlier&quot;, &quot;in_ntk&quot;)
+
+# CHAMPS analysis
+data_champs_merged &lt;- data_champs %&gt;%
+  merge(data_dx, by = c(&quot;SUBJECT_ID&quot;, &quot;VISITNO&quot;), all = TRUE) %&gt;%
+  merge(data_ntk, by = c(&quot;SUBJECT_ID&quot;, &quot;VISITNO&quot;), all = TRUE) %&gt;%
+  merge(data_vital, by = c(&quot;SUBJECT_ID&quot;, &quot;VISITNO&quot;), all = TRUE) %&gt;%
+  merge(data_demo, by = &quot;SUBJECT_ID&quot;, all = TRUE) %&gt;%
+  merge(data_gene, by = &quot;SUBJECT_ID&quot;, all = TRUE) %&gt;%
+  arrange(SUBJECT_ID, VISITNO)
+# 474 patients
+
+# Identify patients with MCI or Dementia at the first CHAMPS visit
+excluded_patients &lt;- data_champs_merged %&gt;%
+  filter(first_champs_visit == 1 &amp; (DIAGNOSIS == &quot;MCI&quot; | DIAGNOSIS == &quot;DEMENTIA&quot;)) %&gt;%
+  pull(SUBJECT_ID)
+# 39 patients
+
+# check if a participant has at least one CHAMPS assessment
+# define Age_CHAMPS as a participant’s age at their baseline/first available CHAMPS assessment 
+# exclude patients with a diagnosis of MCI or dementia at baseline CHAMPS assessment
+data_champs_clean &lt;- data_champs_merged %&gt;%
+  group_by(SUBJECT_ID) %&gt;%
+  filter(any(in_champs == 1)) %&gt;%
+  mutate(Age_CHAMPS = ifelse(first_champs_visit == 1, AgeAtVisit, NA)) %&gt;%
+  fill(Age_CHAMPS, .direction = &quot;downup&quot;) %&gt;%
+  filter(!SUBJECT_ID %in% excluded_patients) %&gt;%
+  ungroup() 
+# length(unique(data_champs_clean$SUBJECT_ID))
+# 220 patients
+
+# Identify patients without biomarker info 1.5 years around baseline CHAMPS visit
+no_ntk_at_baseline_visit &lt;- data_champs_clean %&gt;%
+  filter(first_champs_visit == 1 &amp; is.na(in_ntk)) %&gt;%
+  pull(SUBJECT_ID)
+# 52 patients don&#39;t have biomarker info at the baseline visit
+# 9 out of 52 patients are diagnosed with MCI or Dementia at baseline
+
+ntk_within_window_patients &lt;- data_champs_clean %&gt;%
+  filter(SUBJECT_ID %in% no_ntk_at_baseline_visit) %&gt;%
+  mutate(ntk_within_window = ifelse(
+      (abs(AgeAtVisit - Age_CHAMPS) &lt;= 1.5) &amp;
+      !is.na(in_ntk), 
+    1, 0
+  ))  %&gt;%
+  filter(ntk_within_window == 1) %&gt;%
+  select(c(SUBJECT_ID, all_of(ntk_vars))) %&gt;%
+  group_by(SUBJECT_ID) %&gt;%
+  slice_head(n = 1) %&gt;%
+  ungroup() %&gt;%
+  mutate(first_champs_visit = 1)
+# 4 patients
+
+data_champs_clean &lt;- data_champs_clean %&gt;%
+  filter(!(SUBJECT_ID %in% no_ntk_at_baseline_visit) | 
+           SUBJECT_ID %in% ntk_within_window_patients$SUBJECT_ID) %&gt;%
+  # only include visits from baseline forward for each patient
+  group_by(SUBJECT_ID) %&gt;%
+  mutate(baseline_forward = ifelse(first_champs_visit == 1, 1, NA)) %&gt;%
+  fill(baseline_forward, .direction = &quot;down&quot;) %&gt;%
+  filter(baseline_forward == 1)  %&gt;%
+  # update biomarker info for patients with missing biomarker at baseline
+  merge(ntk_within_window_patients, all.x = TRUE, 
+        by = c(&quot;SUBJECT_ID&quot;, &quot;first_champs_visit&quot;), suffix = c(&quot;_left&quot;, &quot;_right&quot;)) %&gt;%
+   mutate(
+    across(
+      .cols = ends_with(&quot;_left&quot;),  
+      .fns = ~ ifelse(!is.na(.), ., get(str_remove(cur_column(), &quot;_left&quot;) %&gt;% paste0(&quot;_right&quot;))),  
+      .names = &quot;{str_remove(.col, &#39;_left&#39;)}&quot;  
+    )
+  )%&gt;%
+  select(-ends_with(&quot;_left&quot;), -ends_with(&quot;_right&quot;))
+# length(unique(data_champs_clean$SUBJECT_ID))
+# 181 patients, 1322 visits
+
+# Check missingness
+# data_champs_clean %&gt;%
+#   summarise(across(everything(), ~ sum(is.na(.))))
+# md.pattern(data_champs_clean)
+zscore_cols &lt;- c(&quot;PTAU181_zscore&quot;, &quot;AB42AB40_zscore&quot;, &quot;NFL_zscore&quot;, &quot;YKL40_zscore&quot;, &quot;sTREM2_zscore&quot;, &quot;GFAP_zscore&quot;)
+outlier_cols &lt;- c(&quot;PTAU181_outlier&quot;, &quot;AB42AB40_outlier&quot;, &quot;NFL_outlier&quot;, &quot;YKL40_outlier&quot;, &quot;sTREM2_outlier&quot;, &quot;GFAP_outlier&quot;)
+
+# Replace z-score values with NA if the corresponding outlier column is 1
+data_champs_clean &lt;- data_champs_clean |&gt; 
+    mutate(across(all_of(zscore_cols), 
+                  ~ ifelse(get(paste0(sub(&quot;_zscore&quot;, &quot;&quot;, cur_column()), &quot;_outlier&quot;)) == 1, NA, .)))
+
+# save processed data
+write.csv(data_champs_clean, here(&quot;processed-data/CHAMPS_clean_data.csv&quot;))</code></pre>
+</div>
+<div id="descriptive-statistics" class="section level1">
+<h1>Descriptive Statistics</h1>
+<pre class="r"><code>data_champs_clean &lt;- data_champs_clean %&gt;%
+  arrange(SUBJECT_ID, VISITNO)
+
+# only contain baseline info for each patient
+data_champs_clean_bl &lt;- data_champs_clean %&gt;%
+  group_by(SUBJECT_ID) %&gt;%
+  slice_head(n = 1) %&gt;%
+  ungroup()
+
+# only contain complete biomarker info for each patient
+# calculate follow up time based on complete biomarker info
+data_champs_clean_ntk &lt;- data_champs_clean %&gt;%
+  filter(in_ntk == 1) %&gt;%
+  group_by(SUBJECT_ID) %&gt;%
+  mutate(follow_up_time = max(AgeAtVisit) - Age_CHAMPS) %&gt;%
+  fill(follow_up_time, .direction = &quot;downup&quot;) %&gt;%
+  mutate(n_ntk = n()) %&gt;%
+  slice_head(n = 1) %&gt;%
+  ungroup()
+
+summary_stats &lt;- data.frame(
+  # Total number of participants
+  N = nrow(data_champs_clean_bl),
+
+  # Number with a diagnosis of MCI or dementia at last visit
+  N_with_MCI_dementia = sum(data_champs_clean$fup_Dx == 1, na.rm = TRUE),
+  
+  # Number of participants with &#39;Subject_ID&#39; ≥ 400
+  N_participants_400 = sum(data_champs_clean_bl$SUBJECT_ID &gt;= 400, na.rm = TRUE),
+  
+  # Mean (SD) Age_CHAMPS
+  Mean_Age_CHAMPS = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_champs_clean_bl$Age_CHAMPS, na.rm = TRUE), sd(data_champs_clean_bl$Age_CHAMPS, na.rm = TRUE)),
+  
+  # Range of Age_CHAMPS
+  Range_Age_CHAMPS = sprintf(&quot;(%.2f, %.2f)&quot;, min(data_champs_clean_bl$Age_CHAMPS, na.rm = TRUE), max(data_champs_clean_bl$Age_CHAMPS, na.rm = TRUE)),
+  
+  # N (%) female sex
+  N_female = sum(data_champs_clean_bl$Sex_F == 1, na.rm = TRUE),
+  Percent_female = sprintf(&quot;%.2f%%&quot;, (sum(data_champs_clean_bl$Sex_F == 1, na.rm = TRUE) / nrow(data_champs_clean_bl)) * 100),
+  
+  # Mean (SD) years of education
+  Mean_EDUC = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_champs_clean_bl$EDUC, na.rm = TRUE), sd(data_champs_clean_bl$EDUC, na.rm = TRUE)),
+  
+  # N (%) White race
+  N_white = sum(data_champs_clean_bl$Race_White == 1, na.rm = TRUE),
+  Percent_white = sprintf(&quot;%.2f%%&quot;, (sum(data_champs_clean_bl$Race_White == 1, na.rm = TRUE) / nrow(data_champs_clean_bl)) * 100),
+  
+  # N (%) APOE4 carriers
+  N_APOE4 = sum(data_champs_clean_bl$APOE4 == 1, na.rm = TRUE),
+  Percent_APOE4 = sprintf(&quot;%.2f%%&quot;, (sum(data_champs_clean_bl$APOE4 == 1, na.rm = TRUE) / nrow(data_champs_clean_bl)) * 100),
+  
+  # Mean (SD) years of follow-up
+  Mean_Followup = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_champs_clean_ntk$follow_up_time, na.rm = TRUE), sd(data_champs_clean_ntk$follow_up_time, na.rm = TRUE)),
+  
+  # Range of years of follow-up
+  Range_Followup = sprintf(&quot;(%.2f, %.2f)&quot;, min(data_champs_clean_ntk$follow_up_time, na.rm = TRUE), max(data_champs_clean_ntk$follow_up_time, na.rm = TRUE)),
+  
+  # Mean (SD) number of blood biomarker measures
+  Mean_Biomarkers = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_champs_clean_ntk$n_ntk, na.rm = TRUE), sd(data_champs_clean_ntk$n_ntk, na.rm = TRUE)),
+  
+  # Range of number of blood biomarker measures
+  Range_Biomarkers = sprintf(&quot;(%.2f, %.2f)&quot;, min(data_champs_clean_ntk$n_ntk, na.rm = TRUE), max(data_champs_clean_ntk$n_ntk, na.rm = TRUE)),
+  
+  # Mean (SD) time (in years) 
+  Mean_Time = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_champs_clean$AgeAtVisit - data_champs_clean$Age_CHAMPS, na.rm = TRUE), sd(data_champs_clean$AgeAtVisit - data_champs_clean$Age_CHAMPS, na.rm = TRUE)),
+  
+  # Mean Range (min, max) time (in years) 
+  Range_Time = sprintf(&quot;(%.2f, %.2f)&quot;, min(data_champs_clean$AgeAtVisit - data_champs_clean$Age_CHAMPS, na.rm = TRUE), max(data_champs_clean$AgeAtVisit - data_champs_clean$Age_CHAMPS, na.rm = TRUE)),
+  
+  # Mean (SD) LOW_INT_FREQ
+  Mean_LOW_INT = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_champs_clean$LOW_INT_FREQ, na.rm = TRUE), sd(data_champs_clean$LOW_INT_FREQ, na.rm = TRUE)),
+  
+  # Mean (SD) HI_INT_FREQ
+  Mean_HI_INT = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_champs_clean$HIGH_INT_FREQ, na.rm = TRUE), sd(data_champs_clean$HIGH_INT_FREQ, na.rm = TRUE)),
+  
+  # Mean (SD) ALL_INT_FREQ
+  Mean_ALL_INT = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_champs_clean$ALL_INT_FREQ, na.rm = TRUE), sd(data_champs_clean$ALL_INT_FREQ, na.rm = TRUE)),
+  
+  # Mean (SD) BMI
+  Mean_BMI = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_champs_clean$BMI, na.rm = TRUE), sd(data_champs_clean$BMI, na.rm = TRUE)),
+  
+  # Mean (SD) GFAP at baseline CHAMPS
+  Mean_GFAP = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_champs_clean_bl[data_champs_clean_bl$GFAP_outlier==0,]$GFAP, na.rm = TRUE), sd(data_champs_clean_bl[data_champs_clean_bl$GFAP_outlier==0,]$GFAP, na.rm = TRUE)),
+  
+  # Mean (SD) NFL at baseline CHAMPS
+  Mean_NFL = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_champs_clean_bl[data_champs_clean_bl$NFL_outlier==0,]$NFL, na.rm = TRUE), sd(data_champs_clean_bl[data_champs_clean_bl$NFL_outlier==0,]$NFL, na.rm = TRUE)),
+  
+  # Mean (SD) PTAU181 at baseline CHAMPS
+  Mean_PTAU181 = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_champs_clean_bl[data_champs_clean_bl$PTAU181_outlier==0,]$PTAU181, na.rm = TRUE), sd(data_champs_clean_bl[data_champs_clean_bl$PTAU181_outlier==0,]$PTAU181, na.rm = TRUE)),
+  
+  # Mean (SD) AB42AB40 at baseline CHAMPS
+  Mean_AB42AB40 = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_champs_clean_bl[data_champs_clean_bl$AB42AB40_outlier==0,]$AB42AB40, na.rm = TRUE), sd(data_champs_clean_bl[data_champs_clean_bl$AB42AB40_outlier==0,]$AB42AB40, na.rm = TRUE)),
+  
+  # Mean (SD) PTAU181_AB42AB40 at baseline CHAMPS
+  Mean_PTAU181_AB42AB40 = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_champs_clean_bl[data_champs_clean_bl$AB42AB40_outlier==0 &amp; data_champs_clean_bl$PTAU181_outlier==0,]$PTAU181_AB42AB40, na.rm = TRUE), sd(data_champs_clean_bl[data_champs_clean_bl$AB42AB40_outlier==0 &amp; data_champs_clean_bl$PTAU181_outlier==0,]$PTAU181_AB42AB40, na.rm = TRUE)),
+  
+  # Mean (SD) sTREM2 at baseline CHAMPS
+  Mean_sTREM2 = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_champs_clean_bl[data_champs_clean_bl$sTREM2_outlier==0,]$sTREM2, na.rm = TRUE), sd(data_champs_clean_bl[data_champs_clean_bl$sTREM2_outlier==0,]$sTREM2, na.rm = TRUE)),
+  
+  # Mean (SD) YKL40 at baseline CHAMPS
+  Mean_YKL40 = sprintf(&quot;%.2f (%.2f)&quot;, mean(data_champs_clean_bl[data_champs_clean_bl$YKL40_outlier==0,]$YKL40, na.rm = TRUE), sd(data_champs_clean_bl[data_champs_clean_bl$YKL40_outlier==0,]$YKL40, na.rm = TRUE))
+)</code></pre>
 <table>
 <caption>Descriptive Statistics for Participants Included in the CHAMPS
 Analyses</caption>
@@ -540,6 +871,987 @@ CHAMPS and associated baseline blood biomarker measure</td>
 </tr>
 </tbody>
 </table>
+</div>
+<div id="model-analysis" class="section level1">
+<h1>Model Analysis</h1>
+<pre class="r"><code>library(lmerTest) # linear mix effect model
+
+data_champs_clean_analysis &lt;- data_champs_clean |&gt;
+  mutate(time = AgeAtVisit - Age_CHAMPS) |&gt;
+  select(-ends_with(&quot;_outlier&quot;)) |&gt;
+  filter(!if_all(ends_with(&quot;_zscore&quot;), is.na)) |&gt;
+  select(SUBJECT_ID, VISITNO, DIAGNOSIS, LOW_INT_FREQ,HIGH_INT_FREQ,
+         ALL_INT_FREQ, Age_CHAMPS, AgeAtVisit, 
+         Sex_F, APOE4, BMI, time, PTAU181_zscore, AB42AB40_zscore, 
+         NFL_zscore, YKL40_zscore, sTREM2_zscore, GFAP_zscore) |&gt;
+  mutate(Sex_F = factor(Sex_F, levels = c(0,1)), 
+         APOE4 = factor(APOE4, levels = c(0,1))) |&gt;
+  mutate(
+        Age_CHAMPS_z = (Age_CHAMPS - mean(Age_CHAMPS, na.rm = TRUE)) / sd(Age_CHAMPS, na.rm = TRUE),
+        BMI_z = (BMI - mean(BMI, na.rm = TRUE)) / sd(BMI, na.rm = TRUE),
+        LOW_INT_FREQ_z = (LOW_INT_FREQ - mean(LOW_INT_FREQ, na.rm = TRUE)) / sd(LOW_INT_FREQ, na.rm = TRUE),
+        HIGH_INT_FREQ_z = (HIGH_INT_FREQ - mean(HIGH_INT_FREQ, na.rm = TRUE)) / sd(HIGH_INT_FREQ, na.rm = TRUE),
+        ALL_INT_FREQ_z = (ALL_INT_FREQ - mean(ALL_INT_FREQ, na.rm = TRUE)) / sd(ALL_INT_FREQ, na.rm = TRUE)
+    )</code></pre>
+<div id="ab42ab40" class="section level3">
+<h3>AB42AB40</h3>
+<div id="low-frequency" class="section level4">
+<h4>Low Frequency</h4>
+<pre class="r"><code>AB42AB40_CHAMPS_data &lt;- data_champs_clean_analysis |&gt;
+  select(-c(PTAU181_zscore, NFL_zscore, YKL40_zscore, sTREM2_zscore, GFAP_zscore)) |&gt;
+  filter(!is.na(AB42AB40_zscore))
+
+AB42AB40_CHAMPS_model_low &lt;- lmer(AB42AB40_zscore ~ 
+    LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time,
+    data = AB42AB40_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(AB42AB40_CHAMPS_model_low)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: AB42AB40_zscore ~ LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time
+   Data: AB42AB40_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 484.5
+
+Scaled residuals: 
+    Min      1Q  Median      3Q     Max 
+-4.2190 -0.3216  0.0094  0.3465  3.4787 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.5567   0.7461  
+ Residual               0.1143   0.3381  
+Number of obs: 238, groups:  SUBJECT_ID, 137
+
+Fixed effects:
+                     Estimate Std. Error        df t value Pr(&gt;|t|)    
+(Intercept)           0.01988    0.12608 138.26821   0.158   0.8749    
+LOW_INT_FREQ_z       -0.11365    0.05154 135.66897  -2.205   0.0291 *  
+Age_CHAMPS_z         -0.21148    0.06287 133.26038  -3.364   0.0010 ** 
+Sex_F1                0.17164    0.14231 131.58203   1.206   0.2299    
+APOE41               -0.77983    0.14205 129.24932  -5.490 2.05e-07 ***
+BMI_z                 0.10231    0.05756 208.63816   1.777   0.0770 .  
+time                 -0.02215    0.02149 105.03948  -1.031   0.3051    
+LOW_INT_FREQ_z:time   0.03148    0.02697 106.99467   1.167   0.2457    
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+               (Intr) LOW_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+LOW_INT_FREQ_z  0.109                                                  
+Ag_CHAMPS_z     0.022 -0.020                                           
+Sex_F1         -0.724 -0.086          0.031                            
+APOE41         -0.387  0.014         -0.005 -0.009                     
+BMI_z          -0.069  0.077          0.080  0.056  0.018              
+time           -0.165 -0.169         -0.007  0.004 -0.024  0.004       
+LOW_INT_FREQ_: -0.067 -0.635          0.030  0.036  0.005 -0.025  0.064</code></pre>
+</div>
+<div id="high-frequency" class="section level4">
+<h4>High Frequency</h4>
+<pre class="r"><code>AB42AB40_CHAMPS_model_high &lt;- lmer(AB42AB40_zscore ~ 
+    HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time,
+    data = AB42AB40_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(AB42AB40_CHAMPS_model_high)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: AB42AB40_zscore ~ HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time
+   Data: AB42AB40_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 488.3
+
+Scaled residuals: 
+    Min      1Q  Median      3Q     Max 
+-4.1795 -0.3618  0.0278  0.3391  3.4585 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.5672   0.7531  
+ Residual               0.1161   0.3407  
+Number of obs: 238, groups:  SUBJECT_ID, 137
+
+Fixed effects:
+                      Estimate Std. Error        df t value Pr(&gt;|t|)    
+(Intercept)            0.04730    0.12689 136.12525   0.373  0.70991    
+HIGH_INT_FREQ_z       -0.01343    0.03339 134.63067  -0.402  0.68818    
+Age_CHAMPS_z          -0.21290    0.06346 132.72682  -3.355  0.00104 ** 
+Sex_F1                 0.14327    0.14305 129.21825   1.002  0.31844    
+APOE41                -0.76724    0.14373 129.82945  -5.338 4.07e-07 ***
+BMI_z                  0.11804    0.05917 210.65798   1.995  0.04734 *  
+time                  -0.02449    0.02307 108.80890  -1.062  0.29081    
+HIGH_INT_FREQ_z:time   0.03296    0.03405 118.75484   0.968  0.33506    
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+                (Intr) HIGH_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+HIGH_INT_FREQ_z -0.062                                                   
+Ag_CHAMPS_z      0.021  0.029                                            
+Sex_F1          -0.720  0.014           0.031                            
+APOE41          -0.394  0.032          -0.003 -0.006                     
+BMI_z           -0.093  0.136           0.087  0.066  0.031              
+time            -0.166  0.155           0.006 -0.007  0.010  0.095       
+HIGH_INT_FREQ_: -0.043 -0.134           0.024  0.003  0.064  0.139  0.327</code></pre>
+</div>
+<div id="all-frequency" class="section level4">
+<h4>All Frequency</h4>
+<pre class="r"><code>AB42AB40_CHAMPS_model_all &lt;- lmer(AB42AB40_zscore ~ 
+    ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time,
+    data = AB42AB40_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(AB42AB40_CHAMPS_model_all)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: AB42AB40_zscore ~ ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time
+   Data: AB42AB40_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 487.3
+
+Scaled residuals: 
+    Min      1Q  Median      3Q     Max 
+-4.1996 -0.3624  0.0140  0.3630  3.4607 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.5587   0.7475  
+ Residual               0.1167   0.3416  
+Number of obs: 238, groups:  SUBJECT_ID, 137
+
+Fixed effects:
+                     Estimate Std. Error        df t value Pr(&gt;|t|)    
+(Intercept)           0.04801    0.12574 135.65416   0.382 0.703178    
+ALL_INT_FREQ_z       -0.05693    0.03919 142.79276  -1.453 0.148519    
+Age_CHAMPS_z         -0.21443    0.06306 133.27492  -3.401 0.000888 ***
+Sex_F1                0.14997    0.14223 130.05680   1.054 0.293642    
+APOE41               -0.77895    0.14266 129.86176  -5.460 2.33e-07 ***
+BMI_z                 0.10310    0.05854 208.28146   1.761 0.079691 .  
+time                 -0.03028    0.02162 105.35126  -1.401 0.164235    
+ALL_INT_FREQ_z:time   0.01921    0.02813 114.32150   0.683 0.495960    
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+               (Intr) ALL_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+ALL_INT_FREQ_z  0.007                                                  
+Ag_CHAMPS_z     0.024  0.014                                           
+Sex_F1         -0.720 -0.033          0.029                            
+APOE41         -0.391  0.030         -0.003 -0.009                     
+BMI_z          -0.080  0.137          0.085  0.057  0.026              
+time           -0.153  0.017         -0.004 -0.015 -0.012  0.038       
+ALL_INT_FREQ_: -0.027 -0.312          0.027 -0.006  0.040  0.062  0.140</code></pre>
+</div>
+</div>
+<div id="ptau181" class="section level3">
+<h3>PTAU181</h3>
+<div id="low-frequency-1" class="section level4">
+<h4>Low Frequency</h4>
+<pre class="r"><code>PTAU181_CHAMPS_data &lt;- data_champs_clean_analysis |&gt;
+  select(-c(AB42AB40_zscore, YKL40_zscore, NFL_zscore, sTREM2_zscore, GFAP_zscore)) |&gt;
+  filter(!is.na(PTAU181_zscore))
+
+PTAU181_CHAMPS_model_low &lt;- lmer(PTAU181_zscore ~ 
+    LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time,
+    data = PTAU181_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(PTAU181_CHAMPS_model_low)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: PTAU181_zscore ~ LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time
+   Data: PTAU181_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 518.4
+
+Scaled residuals: 
+     Min       1Q   Median       3Q      Max 
+-2.90670 -0.38044 -0.00204  0.37587  3.06741 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.6539   0.8086  
+ Residual               0.1246   0.3530  
+Number of obs: 241, groups:  SUBJECT_ID, 138
+
+Fixed effects:
+                     Estimate Std. Error        df t value Pr(&gt;|t|)    
+(Intercept)          -0.14906    0.13585 140.05861  -1.097  0.27441    
+LOW_INT_FREQ_z        0.01605    0.05437 136.66260   0.295  0.76833    
+Age_CHAMPS_z          0.32522    0.06764 135.28784   4.808    4e-06 ***
+Sex_F1               -0.05732    0.15307 133.42393  -0.374  0.70863    
+APOE41                0.27720    0.15301 131.60327   1.812  0.07232 .  
+BMI_z                -0.02849    0.06134 215.39348  -0.464  0.64281    
+time                  0.06712    0.02229 107.51743   3.011  0.00325 ** 
+LOW_INT_FREQ_z:time   0.01572    0.02838 109.87988   0.554  0.58085    
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+               (Intr) LOW_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+LOW_INT_FREQ_z  0.104                                                  
+Ag_CHAMPS_z     0.021 -0.019                                           
+Sex_F1         -0.728 -0.080          0.026                            
+APOE41         -0.386  0.007          0.000 -0.005                     
+BMI_z          -0.068  0.076          0.079  0.051  0.019              
+time           -0.167 -0.163         -0.009  0.012 -0.026  0.015       
+LOW_INT_FREQ_: -0.061 -0.639          0.030  0.027  0.014 -0.024  0.062</code></pre>
+</div>
+<div id="high-frequency-1" class="section level4">
+<h4>High Frequency</h4>
+<pre class="r"><code>PTAU181_CHAMPS_model_high &lt;- lmer(PTAU181_zscore ~ 
+    HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time,
+    data = PTAU181_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(PTAU181_CHAMPS_model_high)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: PTAU181_zscore ~ HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time
+   Data: PTAU181_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 519.3
+
+Scaled residuals: 
+     Min       1Q   Median       3Q      Max 
+-2.98261 -0.37971 -0.00683  0.38048  3.13396 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.657    0.8106  
+ Residual               0.125    0.3536  
+Number of obs: 241, groups:  SUBJECT_ID, 138
+
+Fixed effects:
+                       Estimate Std. Error         df t value Pr(&gt;|t|)    
+(Intercept)           -0.151668   0.135793 138.519240  -1.117  0.26597    
+HIGH_INT_FREQ_z       -0.011045   0.034664 135.735721  -0.319  0.75049    
+Age_CHAMPS_z           0.323493   0.067828 135.355371   4.769 4.72e-06 ***
+Sex_F1                -0.049954   0.152878 131.796245  -0.327  0.74437    
+APOE41                 0.272137   0.153716 132.588551   1.770  0.07896 .  
+BMI_z                 -0.034365   0.062635 217.063044  -0.549  0.58380    
+time                   0.068394   0.023672 111.194662   2.889  0.00464 ** 
+HIGH_INT_FREQ_z:time   0.002078   0.035223 122.045028   0.059  0.95305    
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+                (Intr) HIGH_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+HIGH_INT_FREQ_z -0.060                                                   
+Ag_CHAMPS_z      0.019  0.029                                            
+Sex_F1          -0.725  0.018           0.026                            
+APOE41          -0.391  0.027           0.003 -0.003                     
+BMI_z           -0.089  0.138           0.087  0.060  0.031              
+time            -0.165  0.147           0.005 -0.001  0.004  0.100       
+HIGH_INT_FREQ_: -0.034 -0.145           0.026 -0.004  0.062  0.135  0.315</code></pre>
+</div>
+<div id="all-frequency-1" class="section level4">
+<h4>All Frequency</h4>
+<pre class="r"><code>PTAU181_CHAMPS_model_all &lt;- lmer(PTAU181_zscore ~ 
+    ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time,
+    data = PTAU181_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(PTAU181_CHAMPS_model_all)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: PTAU181_zscore ~ ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time
+   Data: PTAU181_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 518.9
+
+Scaled residuals: 
+     Min       1Q   Median       3Q      Max 
+-2.97569 -0.37782 -0.00165  0.38592  3.12815 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.6570   0.8106  
+ Residual               0.1244   0.3528  
+Number of obs: 241, groups:  SUBJECT_ID, 138
+
+Fixed effects:
+                      Estimate Std. Error         df t value Pr(&gt;|t|)    
+(Intercept)         -1.561e-01  1.354e-01  1.377e+02  -1.153  0.25111    
+ALL_INT_FREQ_z       1.757e-04  4.078e-02  1.424e+02   0.004  0.99657    
+Age_CHAMPS_z         3.259e-01  6.780e-02  1.355e+02   4.807 4.01e-06 ***
+Sex_F1              -5.209e-02  1.529e-01  1.322e+02  -0.341  0.73390    
+APOE41               2.799e-01  1.536e-01  1.324e+02   1.823  0.07061 .  
+BMI_z               -2.635e-02  6.218e-02  2.159e+02  -0.424  0.67217    
+time                 7.202e-02  2.220e-02  1.077e+02   3.244  0.00157 ** 
+ALL_INT_FREQ_z:time  2.169e-02  2.941e-02  1.174e+02   0.737  0.46230    
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+               (Intr) ALL_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+ALL_INT_FREQ_z  0.005                                                  
+Ag_CHAMPS_z     0.022  0.015                                           
+Sex_F1         -0.725 -0.027          0.024                            
+APOE41         -0.389  0.023          0.002 -0.005                     
+BMI_z          -0.076  0.138          0.084  0.051  0.026              
+time           -0.153  0.016         -0.005 -0.007 -0.015  0.047       
+ALL_INT_FREQ_: -0.018 -0.318          0.028 -0.015  0.045  0.060  0.137</code></pre>
+</div>
+</div>
+<div id="nfl" class="section level3">
+<h3>NFL</h3>
+<div id="low-frequency-2" class="section level4">
+<h4>Low Frequency</h4>
+<pre class="r"><code>NFL_CHAMPS_data &lt;- data_champs_clean_analysis |&gt;
+  select(-c(PTAU181_zscore, AB42AB40_zscore, YKL40_zscore, sTREM2_zscore, GFAP_zscore)) |&gt;
+  filter(!is.na(NFL_zscore))
+
+NFL_CHAMPS_model_low &lt;- lmer(NFL_zscore ~ 
+    LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time,
+    data = NFL_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(NFL_CHAMPS_model_low)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: NFL_zscore ~ LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time
+   Data: NFL_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 412.7
+
+Scaled residuals: 
+     Min       1Q   Median       3Q      Max 
+-2.50690 -0.36652 -0.04196  0.32643  2.02819 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.43924  0.6628  
+ Residual               0.07466  0.2732  
+Number of obs: 241, groups:  SUBJECT_ID, 138
+
+Fixed effects:
+                      Estimate Std. Error         df t value Pr(&gt;|t|)    
+(Intercept)           0.134710   0.110498 141.238058   1.219    0.225    
+LOW_INT_FREQ_z        0.010058   0.042160 135.748182   0.239    0.812    
+Age_CHAMPS_z          0.543533   0.055083 137.045591   9.868  &lt; 2e-16 ***
+Sex_F1                0.006492   0.124666 135.288853   0.052    0.959    
+APOE41               -0.007379   0.124628 133.426832  -0.059    0.953    
+BMI_z                -0.264081   0.049261 220.028554  -5.361 2.09e-07 ***
+time                  0.076184   0.017297 108.610789   4.405 2.49e-05 ***
+LOW_INT_FREQ_z:time  -0.030248   0.021799 110.347296  -1.388    0.168    
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+               (Intr) LOW_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+LOW_INT_FREQ_z  0.103                                                  
+Ag_CHAMPS_z     0.021 -0.016                                           
+Sex_F1         -0.728 -0.080          0.027                            
+APOE41         -0.388  0.011          0.000 -0.004                     
+BMI_z          -0.067  0.079          0.077  0.050  0.019              
+time           -0.158 -0.172         -0.006  0.011 -0.024  0.013       
+LOW_INT_FREQ_: -0.062 -0.630          0.027  0.030  0.008 -0.026  0.073</code></pre>
+</div>
+<div id="high-frequency-2" class="section level4">
+<h4>High Frequency</h4>
+<pre class="r"><code>NFL_CHAMPS_model_high &lt;- lmer(NFL_zscore ~ 
+    HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time,
+    data = NFL_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(NFL_CHAMPS_model_high)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: NFL_zscore ~ HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time
+   Data: NFL_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 414.6
+
+Scaled residuals: 
+    Min      1Q  Median      3Q     Max 
+-2.6139 -0.3822 -0.0079  0.2963  2.1438 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.43634  0.6606  
+ Residual               0.07648  0.2765  
+Number of obs: 241, groups:  SUBJECT_ID, 138
+
+Fixed effects:
+                       Estimate Std. Error         df t value Pr(&gt;|t|)    
+(Intercept)            0.129092   0.110048 138.073716   1.173    0.243    
+HIGH_INT_FREQ_z        0.020260   0.027363 134.671373   0.740    0.460    
+Age_CHAMPS_z           0.546507   0.055022 135.435225   9.932  &lt; 2e-16 ***
+Sex_F1                 0.004885   0.124019 131.858085   0.039    0.969    
+APOE41                -0.002898   0.124634 132.401141  -0.023    0.981    
+BMI_z                 -0.259780   0.050252 219.990570  -5.170 5.26e-07 ***
+time                   0.076449   0.018665 111.152261   4.096 8.01e-05 ***
+HIGH_INT_FREQ_z:time  -0.008378   0.027499 119.937424  -0.305    0.761    
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+                (Intr) HIGH_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+HIGH_INT_FREQ_z -0.058                                                   
+Ag_CHAMPS_z      0.019  0.030                                            
+Sex_F1          -0.725  0.018           0.027                            
+APOE41          -0.393  0.027           0.002 -0.002                     
+BMI_z           -0.089  0.136           0.085  0.060  0.030              
+time            -0.158  0.157           0.007  0.000  0.005  0.100       
+HIGH_INT_FREQ_: -0.038 -0.129           0.025  0.001  0.055  0.132  0.330</code></pre>
+</div>
+<div id="all-frequency-2" class="section level4">
+<h4>All Frequency</h4>
+<pre class="r"><code>NFL_CHAMPS_model_all &lt;- lmer(NFL_zscore ~ 
+    ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time,
+    data = NFL_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(NFL_CHAMPS_model_all)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: NFL_zscore ~ ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time
+   Data: NFL_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 413.2
+
+Scaled residuals: 
+     Min       1Q   Median       3Q      Max 
+-2.57669 -0.38148 -0.02722  0.28928  2.10654 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.43536  0.6598  
+ Residual               0.07564  0.2750  
+Number of obs: 241, groups:  SUBJECT_ID, 138
+
+Fixed effects:
+                      Estimate Std. Error         df t value Pr(&gt;|t|)    
+(Intercept)           0.136353   0.109594 138.985612   1.244    0.216    
+ALL_INT_FREQ_z        0.016287   0.031998 142.812839   0.509    0.612    
+Age_CHAMPS_z          0.543622   0.054922 137.260282   9.898  &lt; 2e-16 ***
+Sex_F1                0.004956   0.123879 134.030697   0.040    0.968    
+APOE41               -0.010273   0.124354 134.027722  -0.083    0.934    
+BMI_z                -0.266712   0.049826 219.516818  -5.353 2.17e-07 ***
+time                  0.071912   0.017367 109.286811   4.141 6.84e-05 ***
+ALL_INT_FREQ_z:time  -0.033116   0.022720 117.064008  -1.458    0.148    
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+               (Intr) ALL_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+ALL_INT_FREQ_z  0.007                                                  
+Ag_CHAMPS_z     0.022  0.017                                           
+Sex_F1         -0.725 -0.028          0.025                            
+APOE41         -0.391  0.025          0.001 -0.004                     
+BMI_z          -0.076  0.138          0.082  0.051  0.025              
+time           -0.145  0.019         -0.002 -0.008 -0.013  0.047       
+ALL_INT_FREQ_: -0.023 -0.302          0.026 -0.010  0.037  0.058  0.151</code></pre>
+</div>
+</div>
+<div id="ykl40" class="section level3">
+<h3>YKL40</h3>
+<div id="low-frequency-3" class="section level4">
+<h4>Low Frequency</h4>
+<pre class="r"><code>YKL40_CHAMPS_data &lt;- data_champs_clean_analysis |&gt;
+  select(-c(PTAU181_zscore, AB42AB40_zscore, NFL_zscore, sTREM2_zscore, GFAP_zscore)) |&gt;
+  filter(!is.na(YKL40_zscore))
+
+YKL40_CHAMPS_model_low &lt;- lmer(YKL40_zscore ~ 
+    LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time,
+    data = YKL40_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(YKL40_CHAMPS_model_low)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: YKL40_zscore ~ LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time
+   Data: YKL40_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 557.8
+
+Scaled residuals: 
+     Min       1Q   Median       3Q      Max 
+-2.50160 -0.46135 -0.03835  0.34780  2.25953 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.5456   0.7387  
+ Residual               0.2090   0.4571  
+Number of obs: 240, groups:  SUBJECT_ID, 138
+
+Fixed effects:
+                     Estimate Std. Error        df t value Pr(&gt;|t|)    
+(Intercept)           0.07486    0.13203 138.17692   0.567    0.572    
+LOW_INT_FREQ_z        0.04971    0.06660 157.89679   0.746    0.457    
+Age_CHAMPS_z          0.41480    0.06533 130.39865   6.349 3.31e-09 ***
+Sex_F1               -0.02661    0.14741 126.71911  -0.181    0.857    
+APOE41               -0.04317    0.14714 124.76097  -0.293    0.770    
+BMI_z                -0.00465    0.06324 182.10140  -0.074    0.941    
+time                  0.02953    0.02850 107.09424   1.036    0.302    
+LOW_INT_FREQ_z:time  -0.05914    0.03655 111.03077  -1.618    0.109    
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+               (Intr) LOW_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+LOW_INT_FREQ_z  0.134                                                  
+Ag_CHAMPS_z     0.017 -0.021                                           
+Sex_F1         -0.721 -0.107          0.030                            
+APOE41         -0.378  0.024         -0.001 -0.007                     
+BMI_z          -0.073  0.066          0.087  0.058  0.019              
+time           -0.218 -0.159         -0.010  0.013 -0.031  0.011       
+LOW_INT_FREQ_: -0.084 -0.607          0.037  0.038  0.024 -0.033  0.070</code></pre>
+</div>
+<div id="high-frequency-3" class="section level4">
+<h4>High Frequency</h4>
+<pre class="r"><code>YKL40_CHAMPS_model_high &lt;- lmer(YKL40_zscore ~ 
+    HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time,
+    data = YKL40_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(YKL40_CHAMPS_model_high)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: YKL40_zscore ~ HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time
+   Data: YKL40_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 560.5
+
+Scaled residuals: 
+     Min       1Q   Median       3Q      Max 
+-2.42112 -0.43930 -0.02237  0.36787  2.37336 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.5618   0.7495  
+ Residual               0.2081   0.4561  
+Number of obs: 240, groups:  SUBJECT_ID, 138
+
+Fixed effects:
+                       Estimate Std. Error         df t value Pr(&gt;|t|)    
+(Intercept)            0.057253   0.132859 137.045953   0.431    0.667    
+HIGH_INT_FREQ_z        0.011837   0.042295 154.919185   0.280    0.780    
+Age_CHAMPS_z           0.419780   0.066098 131.925254   6.351 3.19e-09 ***
+Sex_F1                -0.020657   0.148212 125.991180  -0.139    0.889    
+APOE41                -0.032487   0.149311 127.618008  -0.218    0.828    
+BMI_z                 -0.002497   0.065129 186.897724  -0.038    0.969    
+time                   0.033925   0.030089 114.055110   1.127    0.262    
+HIGH_INT_FREQ_z:time   0.001854   0.044119 131.184065   0.042    0.967    
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+                (Intr) HIGH_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+HIGH_INT_FREQ_z -0.071                                                   
+Ag_CHAMPS_z      0.016  0.035                                            
+Sex_F1          -0.716  0.020           0.030                            
+APOE41          -0.390  0.036           0.003 -0.002                     
+BMI_z           -0.099  0.143           0.096  0.067  0.035              
+time            -0.214  0.127           0.004 -0.002  0.010  0.091       
+HIGH_INT_FREQ_: -0.046 -0.178           0.027 -0.002  0.081  0.128  0.308</code></pre>
+</div>
+<div id="all-frequency-3" class="section level4">
+<h4>All Frequency</h4>
+<pre class="r"><code>YKL40_CHAMPS_model_all &lt;- lmer(YKL40_zscore ~ 
+    ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time,
+    data = YKL40_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(YKL40_CHAMPS_model_all)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: YKL40_zscore ~ ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time
+   Data: YKL40_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 559.2
+
+Scaled residuals: 
+     Min       1Q   Median       3Q      Max 
+-2.39796 -0.44174  0.00021  0.35844  2.26214 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.5523   0.7432  
+ Residual               0.2090   0.4571  
+Number of obs: 240, groups:  SUBJECT_ID, 138
+
+Fixed effects:
+                      Estimate Std. Error         df t value Pr(&gt;|t|)    
+(Intercept)           0.066731   0.131557 134.881826   0.507    0.613    
+ALL_INT_FREQ_z        0.020222   0.049705 167.742198   0.407    0.685    
+Age_CHAMPS_z          0.416191   0.065676 130.830234   6.337 3.49e-09 ***
+Sex_F1               -0.019998   0.147366 125.141315  -0.136    0.892    
+APOE41               -0.047357   0.148364 126.455330  -0.319    0.750    
+BMI_z                -0.009806   0.064277 182.285690  -0.153    0.879    
+time                  0.026317   0.028568 108.732356   0.921    0.359    
+ALL_INT_FREQ_z:time  -0.045390   0.038548 125.972786  -1.177    0.241    
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+               (Intr) ALL_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+ALL_INT_FREQ_z  0.008                                                  
+Ag_CHAMPS_z     0.019  0.020                                           
+Sex_F1         -0.716 -0.038          0.027                            
+APOE41         -0.386  0.041          0.003 -0.007                     
+BMI_z          -0.083  0.139          0.094  0.057  0.031              
+time           -0.203  0.015         -0.005 -0.010 -0.010  0.040       
+ALL_INT_FREQ_: -0.038 -0.298          0.036 -0.013  0.072  0.050  0.162</code></pre>
+</div>
+</div>
+<div id="strem2" class="section level3">
+<h3>sTREM2</h3>
+<div id="low-frequency-4" class="section level4">
+<h4>Low Frequency</h4>
+<pre class="r"><code>sTREM2_CHAMPS_data &lt;- data_champs_clean_analysis |&gt;
+  select(-c(PTAU181_zscore, AB42AB40_zscore, NFL_zscore, YKL40_zscore, GFAP_zscore)) |&gt;
+  filter(!is.na(sTREM2_zscore))
+
+sTREM2_CHAMPS_model_low &lt;- lmer(sTREM2_zscore ~ 
+    LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time,
+    data = sTREM2_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(sTREM2_CHAMPS_model_low)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: sTREM2_zscore ~ LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time
+   Data: sTREM2_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 487.4
+
+Scaled residuals: 
+    Min      1Q  Median      3Q     Max 
+-3.2662 -0.3179 -0.0197  0.3773  3.5253 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.84044  0.9168  
+ Residual               0.07283  0.2699  
+Number of obs: 240, groups:  SUBJECT_ID, 137
+
+Fixed effects:
+                     Estimate Std. Error        df t value Pr(&gt;|t|)    
+(Intercept)          -0.18767    0.14822 135.88001  -1.266 0.207620    
+LOW_INT_FREQ_z        0.04635    0.04327 118.88157   1.071 0.286333    
+Age_CHAMPS_z          0.36326    0.07421 133.44127   4.895 2.79e-06 ***
+Sex_F1                0.61032    0.16841 132.50593   3.624 0.000412 ***
+APOE41               -0.15937    0.16861 131.17983  -0.945 0.346306    
+BMI_z                -0.02966    0.05901 231.33378  -0.503 0.615641    
+time                  0.03571    0.01728 103.10270   2.067 0.041269 *  
+LOW_INT_FREQ_z:time   0.01747    0.02176 103.81135   0.803 0.424089    
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+               (Intr) LOW_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+LOW_INT_FREQ_z  0.078                                                  
+Ag_CHAMPS_z     0.024 -0.011                                           
+Sex_F1         -0.728 -0.061          0.027                            
+APOE41         -0.393  0.009         -0.003 -0.007                     
+BMI_z          -0.058  0.089          0.069  0.046  0.013              
+time           -0.119 -0.186         -0.005  0.009 -0.017  0.019       
+LOW_INT_FREQ_: -0.046 -0.614          0.019  0.021  0.007 -0.026  0.075</code></pre>
+</div>
+<div id="high-frequency-4" class="section level4">
+<h4>High Frequency</h4>
+<pre class="r"><code>sTREM2_CHAMPS_model_high &lt;- lmer(sTREM2_zscore ~ 
+    HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time,
+    data = sTREM2_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(sTREM2_CHAMPS_model_high)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: sTREM2_zscore ~ HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time
+   Data: sTREM2_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 491.6
+
+Scaled residuals: 
+    Min      1Q  Median      3Q     Max 
+-3.4525 -0.3086  0.0027  0.3141  3.7016 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.84817  0.9210  
+ Residual               0.07496  0.2738  
+Number of obs: 240, groups:  SUBJECT_ID, 137
+
+Fixed effects:
+                       Estimate Std. Error         df t value Pr(&gt;|t|)    
+(Intercept)           -0.204279   0.148795 134.928304  -1.373 0.172063    
+HIGH_INT_FREQ_z        0.003755   0.027978 117.613322   0.134 0.893470    
+Age_CHAMPS_z           0.363163   0.074613 133.400965   4.867 3.14e-06 ***
+Sex_F1                 0.628108   0.168936 131.336036   3.718 0.000296 ***
+APOE41                -0.161127   0.169685 131.621596  -0.950 0.344075    
+BMI_z                 -0.032766   0.060562 231.394164  -0.541 0.589002    
+time                   0.044436   0.018616 105.369810   2.387 0.018771 *  
+HIGH_INT_FREQ_z:time   0.013997   0.028059 110.389166   0.499 0.618883    
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+                (Intr) HIGH_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+HIGH_INT_FREQ_z -0.047                                                   
+Ag_CHAMPS_z      0.023  0.022                                            
+Sex_F1          -0.726  0.012           0.027                            
+APOE41          -0.396  0.024          -0.001 -0.005                     
+BMI_z           -0.076  0.134           0.075  0.054  0.022              
+time            -0.119  0.163           0.006 -0.001  0.006  0.110       
+HIGH_INT_FREQ_: -0.030 -0.106           0.020  0.000  0.045  0.139  0.328</code></pre>
+</div>
+<div id="all-frequency-4" class="section level4">
+<h4>All Frequency</h4>
+<pre class="r"><code>sTREM2_CHAMPS_model_all &lt;- lmer(sTREM2_zscore ~ 
+    ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time,
+    data = sTREM2_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(sTREM2_CHAMPS_model_all)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: sTREM2_zscore ~ ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time
+   Data: sTREM2_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 488.2
+
+Scaled residuals: 
+    Min      1Q  Median      3Q     Max 
+-3.3868 -0.3120  0.0020  0.3248  3.6408 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.83887  0.9159  
+ Residual               0.07349  0.2711  
+Number of obs: 240, groups:  SUBJECT_ID, 137
+
+Fixed effects:
+                     Estimate Std. Error        df t value Pr(&gt;|t|)    
+(Intercept)          -0.20475    0.14770 134.28418  -1.386 0.167983    
+ALL_INT_FREQ_z        0.02786    0.03283 121.99160   0.848 0.397856    
+Age_CHAMPS_z          0.36606    0.07417 133.38589   4.935 2.35e-06 ***
+Sex_F1                0.61970    0.16802 131.56985   3.688 0.000329 ***
+APOE41               -0.15138    0.16864 131.44447  -0.898 0.371009    
+BMI_z                -0.01990    0.05983 231.48117  -0.333 0.739723    
+time                  0.04580    0.01725 103.18198   2.655 0.009189 ** 
+ALL_INT_FREQ_z:time   0.03373    0.02296 107.63657   1.469 0.144657    
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+               (Intr) ALL_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+ALL_INT_FREQ_z  0.003                                                  
+Ag_CHAMPS_z     0.025  0.013                                           
+Sex_F1         -0.727 -0.023          0.026                            
+APOE41         -0.395  0.022         -0.002 -0.007                     
+BMI_z          -0.066  0.144          0.073  0.047  0.019              
+time           -0.108  0.018         -0.002 -0.006 -0.009  0.058       
+ALL_INT_FREQ_: -0.017 -0.267          0.020 -0.010  0.031  0.069  0.148</code></pre>
+</div>
+</div>
+<div id="gfap" class="section level3">
+<h3>GFAP</h3>
+<div id="low-frequency-5" class="section level4">
+<h4>Low Frequency</h4>
+<pre class="r"><code>GFAP_CHAMPS_data &lt;- data_champs_clean_analysis |&gt;
+  select(-c(PTAU181_zscore, AB42AB40_zscore, YKL40_zscore, NFL_zscore, sTREM2_zscore)) |&gt;
+  filter(!is.na(GFAP_zscore))
+
+GFAP_CHAMPS_model_low &lt;- lmer(GFAP_zscore ~ 
+    LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time,
+    data = GFAP_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(GFAP_CHAMPS_model_low)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: GFAP_zscore ~ LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time
+   Data: GFAP_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 445.4
+
+Scaled residuals: 
+     Min       1Q   Median       3Q      Max 
+-1.92315 -0.43672  0.03156  0.46456  2.05870 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.4358   0.6602  
+ Residual               0.1010   0.3177  
+Number of obs: 241, groups:  SUBJECT_ID, 137
+
+Fixed effects:
+                      Estimate Std. Error         df t value Pr(&gt;|t|)    
+(Intercept)          -0.448314   0.112520 140.335337  -3.984 0.000108 ***
+LOW_INT_FREQ_z       -0.054756   0.047928 144.247475  -1.142 0.255154    
+Age_CHAMPS_z          0.446048   0.056091 134.724409   7.952 6.59e-13 ***
+Sex_F1                0.407756   0.126652 132.477278   3.219 0.001615 ** 
+APOE41                0.388505   0.126482 130.305558   3.072 0.002592 ** 
+BMI_z                -0.227649   0.052009 206.209249  -4.377 1.91e-05 ***
+time                  0.064419   0.019947 109.872135   3.230 0.001635 ** 
+LOW_INT_FREQ_z:time  -0.002953   0.025173 112.583460  -0.117 0.906812    
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+               (Intr) LOW_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+LOW_INT_FREQ_z  0.115                                                  
+Ag_CHAMPS_z     0.022 -0.020                                           
+Sex_F1         -0.722 -0.090          0.032                            
+APOE41         -0.386  0.013         -0.005 -0.008                     
+BMI_z          -0.072  0.077          0.075  0.048  0.024              
+time           -0.180 -0.170         -0.011  0.009 -0.024  0.016       
+LOW_INT_FREQ_: -0.070 -0.639          0.030  0.034  0.009 -0.027  0.071</code></pre>
+</div>
+<div id="high-frequency-5" class="section level4">
+<h4>High Frequency</h4>
+<pre class="r"><code>GFAP_CHAMPS_model_high &lt;- lmer(GFAP_zscore ~ 
+    HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time,
+    data = GFAP_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(GFAP_CHAMPS_model_high)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: GFAP_zscore ~ HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time
+   Data: GFAP_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 441.5
+
+Scaled residuals: 
+     Min       1Q   Median       3Q      Max 
+-2.27684 -0.40381  0.05494  0.42590  2.08754 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.4355   0.6599  
+ Residual               0.0978   0.3127  
+Number of obs: 241, groups:  SUBJECT_ID, 137
+
+Fixed effects:
+                      Estimate Std. Error        df t value Pr(&gt;|t|)    
+(Intercept)           -0.45461    0.11184 138.04152  -4.065 8.03e-05 ***
+HIGH_INT_FREQ_z        0.03974    0.03026 142.31669   1.313 0.191210    
+Age_CHAMPS_z           0.45202    0.05598 134.47208   8.075 3.38e-13 ***
+Sex_F1                 0.39394    0.12581 130.31578   3.131 0.002148 ** 
+APOE41                 0.41752    0.12650 131.08133   3.301 0.001243 ** 
+BMI_z                 -0.19284    0.05270 209.42540  -3.659 0.000320 ***
+time                   0.07904    0.02083 113.60971   3.794 0.000239 ***
+HIGH_INT_FREQ_z:time   0.06005    0.03069 125.26841   1.957 0.052606 .  
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+                (Intr) HIGH_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+HIGH_INT_FREQ_z -0.062                                                   
+Ag_CHAMPS_z      0.021  0.031                                            
+Sex_F1          -0.719  0.017           0.032                            
+APOE41          -0.394  0.030          -0.003 -0.006                     
+BMI_z           -0.096  0.140           0.082  0.058  0.036              
+time            -0.176  0.140           0.002 -0.005  0.008  0.102       
+HIGH_INT_FREQ_: -0.040 -0.150           0.024 -0.001  0.062  0.133  0.320</code></pre>
+</div>
+<div id="all-frequency-5" class="section level4">
+<h4>All Frequency</h4>
+<pre class="r"><code>GFAP_CHAMPS_model_all &lt;- lmer(GFAP_zscore ~ 
+    ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
+      (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time,
+    data = GFAP_CHAMPS_data, 
+    control = lmerControl(optimizer = &quot;bobyqa&quot;))
+
+summary(GFAP_CHAMPS_model_all)</code></pre>
+<pre><code>Linear mixed model fit by REML. t-tests use Satterthwaite&#39;s method [
+lmerModLmerTest]
+Formula: GFAP_zscore ~ ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 +  
+    BMI_z + time + (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time
+   Data: GFAP_CHAMPS_data
+Control: lmerControl(optimizer = &quot;bobyqa&quot;)
+
+REML criterion at convergence: 447.9
+
+Scaled residuals: 
+     Min       1Q   Median       3Q      Max 
+-2.40386 -0.39534  0.02069  0.43310  2.09663 
+
+Random effects:
+ Groups     Name        Variance Std.Dev.
+ SUBJECT_ID (Intercept) 0.4374   0.6614  
+ Residual               0.1027   0.3204  
+Number of obs: 241, groups:  SUBJECT_ID, 137
+
+Fixed effects:
+                      Estimate Std. Error         df t value Pr(&gt;|t|)    
+(Intercept)          -0.433367   0.112125 137.508644  -3.865 0.000171 ***
+ALL_INT_FREQ_z        0.007580   0.036239 151.748354   0.209 0.834607    
+Age_CHAMPS_z          0.446933   0.056259 134.809222   7.944 6.87e-13 ***
+Sex_F1                0.388603   0.126514 130.888111   3.072 0.002590 ** 
+APOE41                0.396053   0.127017 130.962282   3.118 0.002238 ** 
+BMI_z                -0.218785   0.052876 205.932831  -4.138 5.11e-05 ***
+time                  0.060352   0.020044 110.223685   3.011 0.003230 ** 
+ALL_INT_FREQ_z:time   0.004888   0.026176 120.788425   0.187 0.852174    
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+Correlation of Fixed Effects:
+               (Intr) ALL_INT_FREQ_z A_CHAM Sex_F1 APOE41 BMI_z  time  
+ALL_INT_FREQ_z  0.009                                                  
+Ag_CHAMPS_z     0.024  0.016                                           
+Sex_F1         -0.718 -0.033          0.030                            
+APOE41         -0.391  0.029         -0.003 -0.008                     
+BMI_z          -0.082  0.140          0.080  0.049  0.032              
+time           -0.167  0.008         -0.008 -0.012 -0.012  0.048       
+ALL_INT_FREQ_: -0.025 -0.323          0.027 -0.012  0.043  0.056  0.146</code></pre>
+</div>
 </div>
 </div>
 

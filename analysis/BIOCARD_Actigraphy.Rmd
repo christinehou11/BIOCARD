@@ -18,6 +18,8 @@ library(here)
 library(kableExtra)
 ```
 
+# Data Wrangling
+
 ```{r load raw data}
 # Load raw data
 raw_demo <- read_excel(here("data/BIOCARD_Demographics_2024.08.07_Deidentified.xlsx"), sheet = "BIOCARD_Demographics")
@@ -245,7 +247,7 @@ data_act_clean <- data_act_clean |>
 write.csv(data_act_clean, here("processed-data/Actigraphy_clean_data.csv"))
 ```
 
-## Descriptive Statistics
+# Descriptive Statistics
 
 ```{r descriptive analysis}
 data_act_clean <- data_act_clean %>%
@@ -413,10 +415,10 @@ summary_stats %>%
   kable(caption = "Descriptive Statistics for Participants Included in the Actigraphy Analyses")
 ```
 
-## Model Analysis
+# Model Analysis
 
 ```{r model analysis act data prep}
-library(lme4) # linear mix effect model
+library(lmerTest) # linear mix effect model
 
 data_act_clean_analysis <- data_act_clean |>
   mutate(time = AgeAtVisit - Age_Act) |>
@@ -426,14 +428,19 @@ data_act_clean_analysis <- data_act_clean |>
          Sex_F, APOE4, BMI, time, PTAU181_zscore, AB42AB40_zscore, 
          NFL_zscore, YKL40_zscore, sTREM2_zscore, GFAP_zscore) |>
   mutate(Sex_F = factor(Sex_F, levels = c(0,1)), 
-         APOE4 = factor(APOE4, levels = c(0,1)))
+         APOE4 = factor(APOE4, levels = c(0,1))) |>
+  mutate(
+        LTAC10_z = (LTAC10 - mean(LTAC10, na.rm = TRUE)) / sd(LTAC10, na.rm = TRUE),
+        Age_Act_z = (Age_Act - mean(Age_Act, na.rm = TRUE)) / sd(Age_Act, na.rm = TRUE),
+        BMI_z = (BMI - mean(BMI, na.rm = TRUE)) / sd(BMI, na.rm = TRUE)
+    )
 ```
 
 ```{r save processed act data, echo=FALSE}
 write.csv(data_act_clean_analysis, here("processed-data/Actigraphy_clean_data.csv"))
 ```
 
-#### AB42AB40
+### AB42AB40
 
 ```{r AB42AB40}
 AB42AB40_act_data <- data_act_clean_analysis |>
@@ -441,14 +448,15 @@ AB42AB40_act_data <- data_act_clean_analysis |>
   filter(!is.na(AB42AB40_zscore))
 
 AB42AB40_act_model <- lmer(AB42AB40_zscore ~ 
-    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
-    LTAC10:time,
-    data = AB42AB40_act_data)
+    LTAC10_z + Age_Act_z + Sex_F + APOE4 + BMI_z + time + (1 | SUBJECT_ID) +
+    LTAC10_z:time,
+    data = AB42AB40_act_data, 
+    control = lmerControl(optimizer = "bobyqa"))
 
 summary(AB42AB40_act_model)
 ```
 
-#### PTAU181
+### PTAU181
 
 ```{r PTAU181}
 PTAU181_act_data <- data_act_clean_analysis |>
@@ -456,14 +464,15 @@ PTAU181_act_data <- data_act_clean_analysis |>
   filter(!is.na(PTAU181_zscore))
 
 PTAU181_act_model <- lmer(PTAU181_zscore ~ 
-    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
-    LTAC10:time,
-    data = PTAU181_act_data)
+    LTAC10_z + Age_Act_z + Sex_F + APOE4 + BMI_z + time + (1 | SUBJECT_ID) +
+    LTAC10_z:time,
+    data = PTAU181_act_data, 
+    control = lmerControl(optimizer = "bobyqa"))
 
 summary(PTAU181_act_model)
 ```
 
-#### NFL
+### NFL
 
 ```{r NFL}
 NFL_act_data <- data_act_clean_analysis |>
@@ -471,14 +480,15 @@ NFL_act_data <- data_act_clean_analysis |>
   filter(!is.na(NFL_zscore))
 
 NFL_act_model <- lmer(NFL_zscore ~ 
-    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
-    LTAC10:time,
-    data = NFL_act_data)
+    LTAC10_z + Age_Act_z + Sex_F + APOE4 + BMI_z + time + (1 | SUBJECT_ID) +
+    LTAC10_z:time,
+    data = NFL_act_data, 
+    control = lmerControl(optimizer = "bobyqa"))
 
 summary(NFL_act_model)
 ```
 
-#### YKL40
+### YKL40
 
 ```{r YKL40}
 YKL40_act_data <- data_act_clean_analysis |>
@@ -486,14 +496,15 @@ YKL40_act_data <- data_act_clean_analysis |>
   filter(!is.na(YKL40_zscore))
 
 YKL40_act_model <- lmer(YKL40_zscore ~ 
-    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
-    LTAC10:time,
-    data = YKL40_act_data)
+    LTAC10_z + Age_Act_z + Sex_F + APOE4 + BMI_z + time + (1 | SUBJECT_ID) +
+    LTAC10_z:time,
+    data = YKL40_act_data, 
+    control = lmerControl(optimizer = "bobyqa"))
 
 summary(YKL40_act_model)
 ```
 
-#### sTREM2
+### sTREM2
 
 ```{r sTREM2}
 sTREM2_act_data <- data_act_clean_analysis |>
@@ -501,14 +512,15 @@ sTREM2_act_data <- data_act_clean_analysis |>
   filter(!is.na(sTREM2_zscore))
 
 sTREM2_act_model <- lmer(sTREM2_zscore ~ 
-    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
-    LTAC10:time,
-    data = sTREM2_act_data)
+    LTAC10_z + Age_Act_z + Sex_F + APOE4 + BMI_z + time + (1 | SUBJECT_ID) +
+    LTAC10_z:time,
+    data = sTREM2_act_data, 
+    control = lmerControl(optimizer = "bobyqa"))
 
 summary(sTREM2_act_model)
 ```
 
-#### GFAP
+### GFAP
 
 ```{r GFAP}
 GFAP_act_data <- data_act_clean_analysis |>
@@ -516,9 +528,10 @@ GFAP_act_data <- data_act_clean_analysis |>
   filter(!is.na(GFAP_zscore))
 
 GFAP_act_model <- lmer(GFAP_zscore ~ 
-    LTAC10 + Age_Act + Sex_F + APOE4 + BMI + time + (1 | SUBJECT_ID) +
-    LTAC10:time,
-    data = GFAP_act_data)
+    LTAC10_z + Age_Act_z + Sex_F + APOE4 + BMI_z + time + (1 | SUBJECT_ID) +
+    LTAC10_z:time,
+    data = GFAP_act_data, 
+    control = lmerControl(optimizer = "bobyqa"))
 
 summary(GFAP_act_model)
 ```
