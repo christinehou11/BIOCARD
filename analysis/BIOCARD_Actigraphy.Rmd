@@ -435,12 +435,7 @@ data_act_clean_analysis <- data_act_clean |>
         LTAC10_z = (LTAC10 - mean(LTAC10, na.rm = TRUE)) / sd(LTAC10, na.rm = TRUE),
         Age_Act_z = (Age_Act - mean(Age_Act, na.rm = TRUE)) / sd(Age_Act, na.rm = TRUE),
         BMI_z = (BMI - mean(BMI, na.rm = TRUE)) / sd(BMI, na.rm = TRUE)
-    ) |>
-  left_join(data_champs_clean[, c('SUBJECT_ID','VISITNO', "LOW_INT_FREQ", "HIGH_INT_FREQ","ALL_INT_FREQ")], 
-            by = c('SUBJECT_ID','VISITNO')) |>
-  mutate(LOW_INT_FREQ_z = (LOW_INT_FREQ - mean(LOW_INT_FREQ, na.rm = TRUE)) / sd(LOW_INT_FREQ, na.rm = TRUE),
-        HIGH_INT_FREQ_z = (HIGH_INT_FREQ - mean(HIGH_INT_FREQ, na.rm = TRUE)) / sd(HIGH_INT_FREQ, na.rm = TRUE),
-        ALL_INT_FREQ_z = (ALL_INT_FREQ - mean(ALL_INT_FREQ, na.rm = TRUE)) / sd(ALL_INT_FREQ, na.rm = TRUE))
+    )
 ```
 
 ```{r save processed act data, echo=FALSE}
@@ -471,7 +466,6 @@ To be confirmed: high vs. low values by Actigraphy measures or CHAMPS measures??
 AB42AB40_act_data_plot <- AB42AB40_act_data |> 
   mutate(LTAC10_group = ifelse(LTAC10_z >= median(LTAC10_z, na.rm = TRUE), 
         "LTAC10_zscore >= median(LTAC10_zscore)", "LTAC10_zscore < median(LTAC10_zcore)")) |>
-  filter(if_all(ends_with("_FREQ"), ~ !is.na(.))) |>
   filter(!is.na(LTAC10_z))
 
 p1 <- ggplot(AB42AB40_act_data_plot, aes(x = time, y = AB42AB40_zscore)) +

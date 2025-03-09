@@ -441,7 +441,7 @@ summary(AB42AB40_CHAMPS_model_low)
 ```
 
 ```{r AB42AB40 low plot}
-AB42AB40_CHAMPS_data_plot <- AB42AB40_act_data |>
+AB42AB40_CHAMPS_data_plot <- AB42AB40_CHAMPS_data |>
   mutate(CHAMPS_group_low = ifelse(LOW_INT_FREQ_z >= median(LOW_INT_FREQ_z, na.rm = TRUE), 
         "LOW_INT_FREQ >= median(LOW_INT_FREQ)", "LOW_INT_FREQ < median(LOW_INT_FREQ)"),
          CHAMPS_group_high = ifelse(HIGH_INT_FREQ_z >= median(HIGH_INT_FREQ_z, na.rm = TRUE), 
