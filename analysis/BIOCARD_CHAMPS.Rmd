@@ -440,15 +440,27 @@ AB42AB40_CHAMPS_model_low <- lmer(AB42AB40_zscore ~
 summary(AB42AB40_CHAMPS_model_low)
 ```
 
+##### Visualization
+
 ```{r AB42AB40 low plot}
 AB42AB40_CHAMPS_data_plot <- AB42AB40_CHAMPS_data |>
+  filter(if_all(ends_with("_FREQ"), ~ !is.na(.))) |>
   mutate(CHAMPS_group_low = ifelse(LOW_INT_FREQ_z >= median(LOW_INT_FREQ_z, na.rm = TRUE), 
-        "LOW_INT_FREQ >= median(LOW_INT_FREQ)", "LOW_INT_FREQ < median(LOW_INT_FREQ)"),
-         CHAMPS_group_high = ifelse(HIGH_INT_FREQ_z >= median(HIGH_INT_FREQ_z, na.rm = TRUE), 
-         "HIGH_INT_FREQ >= median(HIGH_INT_FREQ)", "HIGH_INT_FREQ < median(HIGH_INT_FREQ)"),
-         CHAMPS_group_all = ifelse(ALL_INT_FREQ_z >= median(ALL_INT_FREQ_z, na.rm = TRUE), 
-          "ALL_INT_FREQ >= median(ALL_INT_FREQ)", "ALL_INT_FREQ < median(ALL_INT_FREQ)")) |>
-  filter(if_all(ends_with("_FREQ"), ~ !is.na(.)))
+        "LOW_INT_FREQ >= median(LOW_INT_FREQ)", "LOW_INT_FREQ < median(LOW_INT_FREQ)")) 
+
+p1 <- ggplot(AB42AB40_CHAMPS_data_plot, aes(x = time, y = AB42AB40_zscore)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~ CHAMPS_group_low) + 
+  labs(title = "Standardized AB42AB40 Measure Over Time Since Baseline (years)",
+       x = "Time (Years since Baseline)",
+       y = "AB42AB40 zscore") +
+  theme_bw() +
+  theme(aspect.ratio = 1,
+      title = element_text(size = 10),
+      axis.title.x = element_text(size = 8),
+      axis.title.y = element_text(size = 8))
+p1
 ```
 
 
@@ -679,6 +691,30 @@ GFAP_CHAMPS_model_high <- lmer(GFAP_zscore ~
 
 summary(GFAP_CHAMPS_model_high)
 ```
+
+##### Visualization
+
+```{r GFAP high plot}
+GFAP_CHAMPS_data_plot <- GFAP_CHAMPS_data |>
+  filter(if_all(ends_with("_FREQ"), ~ !is.na(.))) |>
+  mutate(CHAMPS_group_high = ifelse(HIGH_INT_FREQ_z >= median(HIGH_INT_FREQ_z, na.rm = TRUE), 
+         "HIGH_INT_FREQ >= median(HIGH_INT_FREQ)", "HIGH_INT_FREQ < median(HIGH_INT_FREQ)"))
+
+p2 <- ggplot(GFAP_CHAMPS_data_plot, aes(x = time, y = GFAP_zscore)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~ CHAMPS_group_high) + 
+  labs(title = "Standardized GFAP Measure Over Time Since Baseline (years)",
+       x = "Time (Years since Baseline)",
+       y = "GFAP zscore") +
+  theme_bw() +
+  theme(aspect.ratio = 1,
+      title = element_text(size = 10),
+      axis.title.x = element_text(size = 8),
+      axis.title.y = element_text(size = 8))
+p2
+```
+
 
 #### All Frequency
 

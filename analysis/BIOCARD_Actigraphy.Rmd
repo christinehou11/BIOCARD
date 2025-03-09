@@ -462,7 +462,7 @@ summary(AB42AB40_act_model)
 
 To be confirmed: high vs. low values by Actigraphy measures or CHAMPS measures???
 
-```{r AB42AB40 plot, fig.width=8, fig.height=4}
+```{r AB42AB40 plot}
 AB42AB40_act_data_plot <- AB42AB40_act_data |> 
   mutate(LTAC10_group = ifelse(LTAC10_z >= median(LTAC10_z, na.rm = TRUE), 
         "LTAC10_zscore >= median(LTAC10_zscore)", "LTAC10_zscore < median(LTAC10_zcore)")) |>
