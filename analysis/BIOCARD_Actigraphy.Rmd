@@ -442,6 +442,44 @@ data_act_clean_analysis <- data_act_clean |>
 write.csv(data_act_clean_analysis, here("processed-data/Actigraphy_clean_data.csv"))
 ```
 
+## Data Visualizations
+
+Z score by sex for blood biomarkers
+
+```{r blood biomarker by sex}
+summary <- data_act_clean_analysis |>
+    group_by(Sex_F) |>
+    select(ends_with("_z")) |>
+    pivot_longer(-Sex_F, names_to = "Biomarker", values_to = "Value")
+ggplot(summary, aes(x = Biomarker, y = Value, fill = Sex_F)) +
+    geom_boxplot(alpha = 0.7) +
+    scale_fill_manual(values = c("0" = "#1f78b4", "1" = "#e31a1c"),
+                      labels = c("Male", "Female")) +
+    labs(title = "Distribution of Z-scored Continuous Predictors by Sex",
+         x = "Predictors",
+         y = "Z-score Value",
+         fill = "Sex") +
+    theme_minimal() +
+    theme(title = element_text(face = "bold", size = 11))
+```
+
+```{r predictors plot}
+summary <- data_act_clean_analysis |>
+    group_by(Sex_F) |>
+    select(ends_with("_zscore")) |>
+    pivot_longer(-Sex_F, names_to = "Biomarker", values_to = "Value")
+ggplot(summary, aes(x = Biomarker, y = Value, fill = Sex_F)) +
+    geom_boxplot(alpha = 0.7) +
+    scale_fill_manual(values = c("0" = "#1f78b4", "1" = "#e31a1c"),
+                      labels = c("Male", "Female")) +
+    labs(title = "Distribution of Z-scored Blood Biomarkers by Sex",
+         x = "Biomarker",
+         y = "Z-score Value",
+         fill = "Sex") +
+    theme_minimal() +
+    theme(title = element_text(face = "bold", size = 14))
+```
+
 ### AB42AB40
 
 ```{r AB42AB40}
