@@ -465,54 +465,29 @@ summary(AB42AB40_act_model)
 
 ##### Visualization
 
-```{r AB42AB40 plot, fig.width=14, fig.height=13}
+To be confirmed: high vs. low values by Actigraphy measures or CHAMPS measures???
+
+```{r AB42AB40 plot, fig.width=8, fig.height=4}
 AB42AB40_act_data_plot <- AB42AB40_act_data |> 
-  mutate(CHAMPS_group_low = ifelse(LOW_INT_FREQ_z >= median(LOW_INT_FREQ_z, na.rm = TRUE), 
-        "LOW_INT_FREQ >= median(LOW_INT_FREQ)", "LOW_INT_FREQ < median(LOW_INT_FREQ)"),
-         CHAMPS_group_high = ifelse(HIGH_INT_FREQ_z >= median(HIGH_INT_FREQ_z, na.rm = TRUE), 
-         "HIGH_INT_FREQ >= median(HIGH_INT_FREQ)", "HIGH_INT_FREQ < median(HIGH_INT_FREQ)"),
-         CHAMPS_group_all = ifelse(ALL_INT_FREQ_z >= median(ALL_INT_FREQ_z, na.rm = TRUE), 
-          "ALL_INT_FREQ >= median(ALL_INT_FREQ)", "ALL_INT_FREQ < median(ALL_INT_FREQ)")) |>
+  mutate(LTAC10_group = ifelse(LTAC10_z >= median(LTAC10_z, na.rm = TRUE), 
+        "LTAC10_zscore >= median(LTAC10_zscore)", "LTAC10_zscore < median(LTAC10_zcore)")) |>
   filter(if_all(ends_with("_FREQ"), ~ !is.na(.))) |>
   filter(!is.na(LTAC10_z))
 
 p1 <- ggplot(AB42AB40_act_data_plot, aes(x = time, y = AB42AB40_zscore)) +
   geom_point(alpha = 0.5) +
   geom_smooth(method = "lm", se = FALSE) +
-  facet_wrap(~ CHAMPS_group_low) + 
+  facet_wrap(~ LTAC10_group) + 
   labs(title = "Standardized AB42AB40 Measure Over Time Since Baseline (years)",
        x = "Time (Years since Baseline)",
-       y = "AB42AB40 zscore",
-       color = "LTAC10 Group",
-       tag = "LOW Intensity\nPhysical Activity") +
+       y = "AB42AB40 zscore") +
   theme_bw() +
-  theme(aspect.ratio = 0.8)
+  theme(aspect.ratio = 1,
+      title = element_text(size = 10),
+      axis.title.x = element_text(size = 8),
+      axis.title.y = element_text(size = 8))
 
-p2 <- ggplot(AB42AB40_act_data_plot, aes(x = time, y = AB42AB40_zscore)) +
-  geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm", se = FALSE) +
-  facet_wrap(~ CHAMPS_group_high) + 
-  labs(title = "Standardized AB42AB40 Measure Over Time Since Baseline (years)",
-       x = "Time (Years since Baseline)",
-       y = "AB42AB40 zscore",
-       color = "LTAC10 Group",
-       tag = "HIGH Intensity\nPhysical Activity") +
-  theme_bw() +
-  theme(aspect.ratio = 0.8)
-
-p3 <- ggplot(AB42AB40_act_data_plot, aes(x = time, y = AB42AB40_zscore)) +
-  geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm", se = FALSE) +
-  facet_wrap(~ CHAMPS_group_all) + 
-  labs(title = "Standardized AB42AB40 Measure Over Time Since Baseline (years)",
-       x = "Time (Years since Baseline)",
-       y = "AB42AB40 zscore",
-       color = "LTAC10 Group",
-       tag = "ALL Intensity\nPhysical Activity") +
-  theme_bw() +
-  theme(aspect.ratio = 0.8)
-
-plot_grid(p1, p2, p3, nrow = 3)
+p1
 ```
 
 
