@@ -8,263 +8,29 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(message = FALSE, warning = FALSE, comment = NA)
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, comment = NA,
+                      fig.align = "center", fig.height = 6, fig.width = 12)
 library(readxl)
 library(tidyverse)
 library(mice)
 library(knitr)
 library(here)
 library(kableExtra)
-```
-
-# Data Wrangling
-
-```{r load data}
-raw_demo <- read_excel(here("data/BIOCARD_Demographics_2024.08.07_Deidentified.xlsx"), sheet = "BIOCARD_Demographics")
-raw_dx <- read_excel(here("data/BIOCARD_DiagnosisData_2024.09.08_Deidentified.xlsx"), sheet = "BIOCARD_DiagnosisData")
-raw_act <- read_excel(here("data/actigraphy_data_BIOCARD_8_7_24_from Daniel_Deidentified.xlsx"), sheet = "actigraphy_data_BIOCARD_8_7_24")
-raw_gene <- read_excel(here("data/BIOCARD_Genetics_Data_2023.03.28_Deidentified.xlsx"), sheet = "GENETICS_Data")
-raw_champs <- read_excel(here("data/BIOCARD_Leisure_Activity_Champs_2023.09.10_other coded_Deidentified.xlsx"), sheet = "BIOCARD_PA_BloodBiomarkers-CHAM")
-# NTK often stands for NeuroToolKit. NTK is a set of biomarkers used for neurological and neurodegenerative disease research
-raw_ntk <- read_excel(here("data/BIOCARD_NTK Blood biomarkers_08.09.24_JHU only.xlsx"), sheet = "NTK Datafile to Use_JHU only")
-raw_vital <- read_excel(here("data/BIOCARD_Vital_Signs_Sensory_2023.04.17_Deidentified.xlsx"), sheet = "BIOCARD_VITAL_SIGNS_SENSORY")
-raw_gene_new <- read_excel(here("data/New participants_BIOCARD ApoE Genotypes 2023-2024_Deidentified.xlsx"), sheet = "Sheet1")
-
-# Check missingness
-# data %>%
-#   summarise(across(everything(), ~ sum(is.na(.))))
-# md.pattern(data)
-```
-
-```{r data clean}
-# Demographics data
-# Sex: 1=Male|2=Female
-# Educ: years of education, 12=Min|20=Max|99=Unknown|Blank
-#   no unknown or missing
-# Race: 1=White|2=Black or African American|3=American Indian or Alaska Native|4=Native Hawaiian or Other Pacific Islander|5=Asian|99=Unknown|Blank
-#   no 4 or missing
-# Sex_F: 1=F|0=M
-# Race_White: 1=White|0=Other|99=Missing
-data_demo <- raw_demo %>%
-  select(SUBJECT_ID, SEX, EDUC, RACE) %>%
-  mutate(Sex_F = ifelse(SEX == 2, 1, 0)) %>% 
-  mutate(Race_White = case_when(
-    RACE == 1 ~ 1,
-    RACE %in% c(2,3,4,5) ~ 0,
-    TRUE ~ 99
-  )) %>%
-  select(SUBJECT_ID, Sex_F, Race_White, EDUC) %>%
-  mutate(in_demo = 1)
-# check data
-# data_demo %>% 
-#   select(EDUC, Race_White, Sex_F) %>%
-#   table()
-# data_demo$SUBJECT_ID[duplicated(data_demo$SUBJECT_ID)] 
-# length(unique(data_demo$SUBJECT_ID)) 
-# 474 subjects
-
-# Diagnosis data
-# fup_Dx: 1 if last available (i.e., most recent) ‘DIAGNOSIS’ = MCI or dementia, otherwise 0
-data_dx <- raw_dx %>%
-  select(SUBJECT_ID, VISITNO, AgeAtVisit, DIAGNOSIS, DECAGE) %>%
-  group_by(SUBJECT_ID) %>% 
-  mutate(last_visit = ifelse(AgeAtVisit == max(AgeAtVisit), 1, 0)) %>%
-  ungroup() %>%
-  mutate(fup_Dx = ifelse(DIAGNOSIS %in% c("DEMENTIA", "MCI") & last_visit == 1, 1, 0)) %>%
-  mutate(in_dx = 1)
-# check data
-# table(data_dx$DIAGNOSIS)
-# DEMENTIA, IMPAIRED NOT MCI, MCI, NORMAL 
-# length(unique(data_dx$SUBJECT_ID))
-# 474 subjects
-
-# Blood biomarkers data
-data_ntk <- raw_ntk %>%
-  select(SUBJECT_ID, VISITNO,
-         PTAU181_zscore, AB42AB40_zscore, # AD-specific measures
-         NFL_zscore, YKL40_zscore, sTREM2_zscore, GFAP_zscore, # AD non-specific measures
-         PTAU181_outlier, AB42AB40_outlier, NFL_outlier, YKL40_outlier, sTREM2_outlier, GFAP_outlier,
-         GFAP, NFL, PTAU181, AB42AB40, PTAU181_AB42AB40, sTREM2, YKL40) %>% # outlier indicators for each biomarker measure 
-  mutate(in_ntk = 1)
-# check data
-# length(unique(data_ntk$SUBJECT_ID))
-# 266 subjects
-
-# CHAMPS activity questionnaire data
-low_freq_vars <- c("B11110a_freq", "B11120a_freq", "B11122a_freq", "B11127a_freq", "B11128a_freq", "B11134a_freq", "B11135a_freq", "B11139a_freq")
-high_freq_vars <- c("B11107a_freq", "B11109a_freq", "B11114a_freq", "B11115a_freq", "B11116a_freq", "B11119a_freq", "B11121a_freq", "B11123a_freq", "B11124a_freq", "B11125a_freq", "B11126a_freq", "B11129a_freq", "B11130a_freq", "B11131a_freq", "B11132a_freq", "B11133a_freq", "B11136a_freq", "B11137a_freq", "B11138a_freq", "B11140a_freq")
-# Create three continuous variables reflecting each participant’s frequency of engagement in low intensity physical activities, high intensity physical activities, and all physical activities (regardless of level of intensity)
-data_champs <- raw_champs %>%
-  select(c(SUBJECT_ID, VISITNO, low_freq_vars, high_freq_vars, "B11141a_freq", "B11141s_CAT")) %>%
-  mutate(across(all_of(c(low_freq_vars, high_freq_vars, "B11141a_freq")), as.numeric)) %>%  
-  mutate(
-    LOW_INT_FREQ = rowSums(select(., all_of(low_freq_vars)), na.rm = TRUE) +
-                   ifelse(!is.na(B11141s_CAT) & B11141s_CAT == "Physical-low", B11141a_freq, 0),
-    HIGH_INT_FREQ = rowSums(select(., all_of(high_freq_vars)), na.rm = TRUE) +
-                    ifelse(!is.na(B11141s_CAT) & B11141s_CAT == "Physical-modhi", B11141a_freq, 0),
-    ALL_INT_FREQ = LOW_INT_FREQ + HIGH_INT_FREQ
-  ) %>%
-  select(SUBJECT_ID, VISITNO, LOW_INT_FREQ, HIGH_INT_FREQ, ALL_INT_FREQ) %>%
-  mutate(in_champs = 1) %>%
-  group_by(SUBJECT_ID) %>% 
-  mutate(first_champs_visit = ifelse(VISITNO == min(VISITNO), 1, 0))
-# check data
-# length(unique(data_champs$SUBJECT_ID))
-# 259 subjects
-
-# Actigraphy data
-# LTAC10 total average activity counts over the 10 most active hours of the day, averaged across 3 days with valid data
-data_act <- raw_act %>%
-  select(SUBJECT_ID, VISITNO, LTAC10) %>%
-  mutate(in_act = 1) %>%
-  group_by(SUBJECT_ID) %>% 
-  mutate(first_act_visit = ifelse(VISITNO == min(VISITNO), 1, 0))
-# check data
-# length(unique(data_act$SUBJECT_ID))
-# 240 subjects
-
-# Genetics (APOE genetic status) data
-data_gene_new <- raw_gene_new %>%
-  filter(!is.na(SUBJECT_ID)) %>%
-  mutate(APOECODE = APOECODE/10)
-
-data_gene <- raw_gene %>%
-  rbind(data_gene_new) %>%
-  mutate(APOE4 = case_when(
-      APOECODE %in% c(2.2, 2.3, 3.3) ~ 0,  
-      APOECODE %in% c(2.4, 3.4, 4.4) ~ 1,  
-      APOECODE == "" | is.na(APOECODE) ~ NA_real_ 
-    )) %>%
-  mutate(in_gene = 1)
-# check data
-# length(unique(data_gene$SUBJECT_ID))
-# 467 subjects
-
-# Vital signs/ sensory data
-data_vital <- raw_vital %>%
-  select(SUBJECT_ID, VISITNO, BMI) %>%
-  mutate(in_vital = 1)
-# check data
-# length(unique(data_vital$SUBJECT_ID))
-# 394 subjects
-```
-
-```{r data merge}
-# format variables to merge on
-format_columns <- c("SUBJECT_ID","VISITNO")
-data_dx[format_columns] <- lapply(data_dx[format_columns], as.numeric) 
-data_act[format_columns] <- lapply(data_act[format_columns], as.numeric) 
-
-# biomarker variables
-ntk_vars = c("PTAU181_zscore", "AB42AB40_zscore", "NFL_zscore", "YKL40_zscore",
-             "sTREM2_zscore", "GFAP_zscore", "PTAU181_outlier", "AB42AB40_outlier",
-             "NFL_outlier", "YKL40_outlier", "sTREM2_outlier", "GFAP_outlier", "in_ntk")
-
-# CHAMPS analysis
-data_champs_merged <- data_champs %>%
-  merge(data_dx, by = c("SUBJECT_ID", "VISITNO"), all = TRUE) %>%
-  merge(data_ntk, by = c("SUBJECT_ID", "VISITNO"), all = TRUE) %>%
-  merge(data_vital, by = c("SUBJECT_ID", "VISITNO"), all = TRUE) %>%
-  merge(data_demo, by = "SUBJECT_ID", all = TRUE) %>%
-  merge(data_gene, by = "SUBJECT_ID", all = TRUE) %>%
-  arrange(SUBJECT_ID, VISITNO)
-# 474 patients
-
-# Identify patients with MCI or Dementia at the first CHAMPS visit
-excluded_patients <- data_champs_merged %>%
-  filter(first_champs_visit == 1 & (DIAGNOSIS == "MCI" | DIAGNOSIS == "DEMENTIA")) %>%
-  pull(SUBJECT_ID)
-# 39 patients
-
-# check if a participant has at least one CHAMPS assessment
-# define Age_CHAMPS as a participant’s age at their baseline/first available CHAMPS assessment 
-# exclude patients with a diagnosis of MCI or dementia at baseline CHAMPS assessment
-data_champs_clean <- data_champs_merged %>%
-  group_by(SUBJECT_ID) %>%
-  filter(any(in_champs == 1)) %>%
-  mutate(Age_CHAMPS = ifelse(first_champs_visit == 1, AgeAtVisit, NA)) %>%
-  fill(Age_CHAMPS, .direction = "downup") %>%
-  filter(!SUBJECT_ID %in% excluded_patients) %>%
-  ungroup() 
-# length(unique(data_champs_clean$SUBJECT_ID))
-# 220 patients
-
-# Identify patients without biomarker info 1.5 years around baseline CHAMPS visit
-no_ntk_at_baseline_visit <- data_champs_clean %>%
-  filter(first_champs_visit == 1 & is.na(in_ntk)) %>%
-  pull(SUBJECT_ID)
-# 52 patients don't have biomarker info at the baseline visit
-# 9 out of 52 patients are diagnosed with MCI or Dementia at baseline
-
-ntk_within_window_patients <- data_champs_clean %>%
-  filter(SUBJECT_ID %in% no_ntk_at_baseline_visit) %>%
-  mutate(ntk_within_window = ifelse(
-      (abs(AgeAtVisit - Age_CHAMPS) <= 1.5) &
-      !is.na(in_ntk), 
-    1, 0
-  ))  %>%
-  filter(ntk_within_window == 1) %>%
-  select(c(SUBJECT_ID, all_of(ntk_vars))) %>%
-  group_by(SUBJECT_ID) %>%
-  slice_head(n = 1) %>%
-  ungroup() %>%
-  mutate(first_champs_visit = 1)
-# 4 patients
-
-data_champs_clean <- data_champs_clean %>%
-  filter(!(SUBJECT_ID %in% no_ntk_at_baseline_visit) | 
-           SUBJECT_ID %in% ntk_within_window_patients$SUBJECT_ID) %>%
-  # only include visits from baseline forward for each patient
-  group_by(SUBJECT_ID) %>%
-  mutate(baseline_forward = ifelse(first_champs_visit == 1, 1, NA)) %>%
-  fill(baseline_forward, .direction = "down") %>%
-  filter(baseline_forward == 1)  %>%
-  # update biomarker info for patients with missing biomarker at baseline
-  merge(ntk_within_window_patients, all.x = TRUE, 
-        by = c("SUBJECT_ID", "first_champs_visit"), suffix = c("_left", "_right")) %>%
-   mutate(
-    across(
-      .cols = ends_with("_left"),  
-      .fns = ~ ifelse(!is.na(.), ., get(str_remove(cur_column(), "_left") %>% paste0("_right"))),  
-      .names = "{str_remove(.col, '_left')}"  
-    )
-  )%>%
-  select(-ends_with("_left"), -ends_with("_right"))
-# length(unique(data_champs_clean$SUBJECT_ID))
-# 181 patients, 1322 visits
-
-# Check missingness
-# data_champs_clean %>%
-#   summarise(across(everything(), ~ sum(is.na(.))))
-# md.pattern(data_champs_clean)
-zscore_cols <- c("PTAU181_zscore", "AB42AB40_zscore", "NFL_zscore", "YKL40_zscore", "sTREM2_zscore", "GFAP_zscore")
-outlier_cols <- c("PTAU181_outlier", "AB42AB40_outlier", "NFL_outlier", "YKL40_outlier", "sTREM2_outlier", "GFAP_outlier")
-
-# Replace z-score values with NA if the corresponding outlier column is 1
-data_champs_clean <- data_champs_clean |> 
-    mutate(across(all_of(zscore_cols), 
-                  ~ ifelse(get(paste0(sub("_zscore", "", cur_column()), "_outlier")) == 1, NA, .)))
-
-# save processed data
-write.csv(data_champs_clean, here("processed-data/CHAMPS_clean_data.csv"))
+library(gridExtra)
+library(ggplot2)
+library(cowplot)
+library(lmerTest) # mixed linear model
 ```
 
 # Descriptive Statistics
 
-```{r descriptive analysis}
-data_champs_clean <- data_champs_clean %>%
-  arrange(SUBJECT_ID, VISITNO)
+```{r}
+data_champs_clean <- read.csv(here("processed-data/CHAMPS_clean_data.csv"), 
+                              row.names = 1, check.names = FALSE)
 
 # only contain baseline info for each patient
+# calculate follow up time 
 data_champs_clean_bl <- data_champs_clean %>%
-  group_by(SUBJECT_ID) %>%
-  slice_head(n = 1) %>%
-  ungroup()
-
-# only contain complete biomarker info for each patient
-# calculate follow up time based on complete biomarker info
-data_champs_clean_ntk <- data_champs_clean %>%
-  filter(in_ntk == 1) %>%
   group_by(SUBJECT_ID) %>%
   mutate(follow_up_time = max(AgeAtVisit) - Age_CHAMPS) %>%
   fill(follow_up_time, .direction = "downup") %>%
@@ -304,34 +70,34 @@ summary_stats <- data.frame(
   Percent_APOE4 = sprintf("%.2f%%", (sum(data_champs_clean_bl$APOE4 == 1, na.rm = TRUE) / nrow(data_champs_clean_bl)) * 100),
   
   # Mean (SD) years of follow-up
-  Mean_Followup = sprintf("%.2f (%.2f)", mean(data_champs_clean_ntk$follow_up_time, na.rm = TRUE), sd(data_champs_clean_ntk$follow_up_time, na.rm = TRUE)),
+  Mean_Followup = sprintf("%.2f (%.2f)", mean(data_champs_clean_bl$follow_up_time, na.rm = TRUE), sd(data_champs_clean_bl$follow_up_time, na.rm = TRUE)),
   
   # Range of years of follow-up
-  Range_Followup = sprintf("(%.2f, %.2f)", min(data_champs_clean_ntk$follow_up_time, na.rm = TRUE), max(data_champs_clean_ntk$follow_up_time, na.rm = TRUE)),
+  Range_Followup = sprintf("(%.2f, %.2f)", min(data_champs_clean_bl$follow_up_time, na.rm = TRUE), max(data_champs_clean_bl$follow_up_time, na.rm = TRUE)),
   
   # Mean (SD) number of blood biomarker measures
-  Mean_Biomarkers = sprintf("%.2f (%.2f)", mean(data_champs_clean_ntk$n_ntk, na.rm = TRUE), sd(data_champs_clean_ntk$n_ntk, na.rm = TRUE)),
+  Mean_Biomarkers = sprintf("%.2f (%.2f)", mean(data_champs_clean_bl$n_ntk, na.rm = TRUE), sd(data_champs_clean_bl$n_ntk, na.rm = TRUE)),
   
   # Range of number of blood biomarker measures
-  Range_Biomarkers = sprintf("(%.2f, %.2f)", min(data_champs_clean_ntk$n_ntk, na.rm = TRUE), max(data_champs_clean_ntk$n_ntk, na.rm = TRUE)),
+  Range_Biomarkers = sprintf("(%.2f, %.2f)", min(data_champs_clean_bl$n_ntk, na.rm = TRUE), max(data_champs_clean_bl$n_ntk, na.rm = TRUE)),
   
   # Mean (SD) time (in years) 
-  Mean_Time = sprintf("%.2f (%.2f)", mean(data_champs_clean$AgeAtVisit - data_champs_clean$Age_CHAMPS, na.rm = TRUE), sd(data_champs_clean$AgeAtVisit - data_champs_clean$Age_CHAMPS, na.rm = TRUE)),
+  Mean_Time = sprintf("%.2f (%.2f)", mean(data_champs_clean_bl$Age_NTK_bl - data_champs_clean_bl$Age_CHAMPS, na.rm = TRUE), sd(data_champs_clean_bl$Age_NTK_bl - data_champs_clean_bl$Age_CHAMPS, na.rm = TRUE)),
   
   # Mean Range (min, max) time (in years) 
-  Range_Time = sprintf("(%.2f, %.2f)", min(data_champs_clean$AgeAtVisit - data_champs_clean$Age_CHAMPS, na.rm = TRUE), max(data_champs_clean$AgeAtVisit - data_champs_clean$Age_CHAMPS, na.rm = TRUE)),
+  Range_Time = sprintf("(%.2f, %.2f)", min(data_champs_clean_bl$Age_NTK_bl - data_champs_clean_bl$Age_CHAMPS, na.rm = TRUE), max(data_champs_clean_bl$Age_NTK_bl - data_champs_clean_bl$Age_CHAMPS, na.rm = TRUE)),
   
   # Mean (SD) LOW_INT_FREQ
-  Mean_LOW_INT = sprintf("%.2f (%.2f)", mean(data_champs_clean$LOW_INT_FREQ, na.rm = TRUE), sd(data_champs_clean$LOW_INT_FREQ, na.rm = TRUE)),
+  Mean_LOW_INT = sprintf("%.2f (%.2f)", mean(data_champs_clean_bl$LOW_INT_FREQ, na.rm = TRUE), sd(data_champs_clean_bl$LOW_INT_FREQ, na.rm = TRUE)),
   
   # Mean (SD) HI_INT_FREQ
-  Mean_HI_INT = sprintf("%.2f (%.2f)", mean(data_champs_clean$HIGH_INT_FREQ, na.rm = TRUE), sd(data_champs_clean$HIGH_INT_FREQ, na.rm = TRUE)),
+  Mean_HI_INT = sprintf("%.2f (%.2f)", mean(data_champs_clean_bl$HIGH_INT_FREQ, na.rm = TRUE), sd(data_champs_clean_bl$HIGH_INT_FREQ, na.rm = TRUE)),
   
   # Mean (SD) ALL_INT_FREQ
-  Mean_ALL_INT = sprintf("%.2f (%.2f)", mean(data_champs_clean$ALL_INT_FREQ, na.rm = TRUE), sd(data_champs_clean$ALL_INT_FREQ, na.rm = TRUE)),
+  Mean_ALL_INT = sprintf("%.2f (%.2f)", mean(data_champs_clean_bl$ALL_INT_FREQ, na.rm = TRUE), sd(data_champs_clean_bl$ALL_INT_FREQ, na.rm = TRUE)),
   
   # Mean (SD) BMI
-  Mean_BMI = sprintf("%.2f (%.2f)", mean(data_champs_clean$BMI, na.rm = TRUE), sd(data_champs_clean$BMI, na.rm = TRUE)),
+  Mean_BMI = sprintf("%.2f (%.2f)", mean(data_champs_clean_bl$BMI, na.rm = TRUE), sd(data_champs_clean_bl$BMI, na.rm = TRUE)),
   
   # Mean (SD) GFAP at baseline CHAMPS
   Mean_GFAP = sprintf("%.2f (%.2f)", mean(data_champs_clean_bl[data_champs_clean_bl$GFAP_outlier==0,]$GFAP, na.rm = TRUE), sd(data_champs_clean_bl[data_champs_clean_bl$GFAP_outlier==0,]$GFAP, na.rm = TRUE)),
@@ -356,7 +122,7 @@ summary_stats <- data.frame(
 )
 ```
 
-```{r print out, echo=FALSE}
+```{r, echo=FALSE}
 summary_stats <- as.data.frame(t(summary_stats))
 summary_stats$Variable = c("N", 
                            "N with a diagnosis of MCI or dementia at last visit (‘fup_Dx’ = 1)",
@@ -394,337 +160,286 @@ summary_stats %>%
   kable(caption = "Descriptive Statistics for Participants Included in the CHAMPS Analyses")
 ```
 
+
 # Model Analysis
 
-```{r model analysis champs data prep}
-library(lmerTest) # linear mix effect model
+### Data Preparation
 
-data_champs_clean_analysis <- data_champs_clean |>
-  mutate(time = AgeAtVisit - Age_CHAMPS) |>
-  select(-ends_with("_outlier")) |>
-  filter(!if_all(ends_with("_zscore"), is.na)) |>
-  select(SUBJECT_ID, VISITNO, DIAGNOSIS, LOW_INT_FREQ,HIGH_INT_FREQ,
-         ALL_INT_FREQ, Age_CHAMPS, AgeAtVisit, 
-         Sex_F, APOE4, BMI, time, PTAU181_zscore, AB42AB40_zscore, 
-         NFL_zscore, YKL40_zscore, sTREM2_zscore, GFAP_zscore) |>
-  mutate(Sex_F = factor(Sex_F, levels = c(0,1)), 
-         APOE4 = factor(APOE4, levels = c(0,1))) |>
-  mutate(
-        Age_CHAMPS_z = (Age_CHAMPS - mean(Age_CHAMPS, na.rm = TRUE)) / sd(Age_CHAMPS, na.rm = TRUE),
-        BMI_z = (BMI - mean(BMI, na.rm = TRUE)) / sd(BMI, na.rm = TRUE),
-        LOW_INT_FREQ_z = (LOW_INT_FREQ - mean(LOW_INT_FREQ, na.rm = TRUE)) / sd(LOW_INT_FREQ, na.rm = TRUE),
-        HIGH_INT_FREQ_z = (HIGH_INT_FREQ - mean(HIGH_INT_FREQ, na.rm = TRUE)) / sd(HIGH_INT_FREQ, na.rm = TRUE),
-        ALL_INT_FREQ_z = (ALL_INT_FREQ - mean(ALL_INT_FREQ, na.rm = TRUE)) / sd(ALL_INT_FREQ, na.rm = TRUE)
-    )
+```{r}
+model_vars = c("Age_CHAMPS_z", "bl_sex", "bl_APOE4", "bl_BMI_z", "bl_low_z", 
+               "bl_high_z","bl_all_z","time")
+
+# mutate baseline characteristics
+data_champs_model <- data_champs_clean %>%
+  mutate(time = AgeAtVisit - Age_CHAMPS) %>%
+  arrange(SUBJECT_ID, VISITNO) %>%
+  group_by(SUBJECT_ID) %>%
+  mutate(bl_sex = ifelse(first_champs_visit == 1, Sex_F, NA),
+         bl_APOE4 = ifelse(first_champs_visit == 1, APOE4, NA),
+         bl_BMI = ifelse(first_champs_visit == 1, BMI, NA),
+         bl_low = ifelse(first_champs_visit == 1, LOW_INT_FREQ, NA),
+         bl_high = ifelse(first_champs_visit == 1, HIGH_INT_FREQ, NA),
+         bl_all = ifelse(first_champs_visit == 1, ALL_INT_FREQ, NA)
+         ) %>%
+  # standardize continuous predictors
+  mutate(bl_sex = as.factor(bl_sex),
+         bl_APOE4 = as.factor(bl_APOE4),
+         Age_CHAMPS_z = (Age_CHAMPS - mean(data_champs_clean_bl$Age_CHAMPS, na.rm = TRUE)) / sd(data_champs_clean_bl$Age_CHAMPS, na.rm = TRUE),
+         bl_BMI_z = (bl_BMI - mean(data_champs_clean_bl$BMI, na.rm = TRUE)) / sd(data_champs_clean_bl$BMI, na.rm = TRUE),
+         bl_low_z = (bl_low - mean(data_champs_clean_bl$LOW_INT_FREQ, na.rm = TRUE)) / sd(data_champs_clean_bl$LOW_INT_FREQ, na.rm = TRUE),
+         bl_high_z = (bl_high - mean(data_champs_clean_bl$HIGH_INT_FREQ, na.rm = TRUE)) / sd(data_champs_clean_bl$HIGH_INT_FREQ, na.rm = TRUE),
+         bl_all_z = (bl_all - mean(data_champs_clean_bl$ALL_INT_FREQ, na.rm = TRUE)) / sd(data_champs_clean_bl$ALL_INT_FREQ, na.rm = TRUE)
+         ) %>%
+  fill(bl_sex, .direction = "down") %>%
+  fill(bl_APOE4, .direction = "down") %>%
+  fill(Age_CHAMPS_z, .direction = "down") %>%
+  fill(bl_BMI_z, .direction = "down") %>%
+  fill(bl_low_z, .direction = "down") %>%
+  fill(bl_high_z, .direction = "down") %>%
+  fill(bl_all_z, .direction = "down") 
+# 9 rows missing BMI
+
+data_champs_GFAP <- data_champs_model %>%
+  select(c(SUBJECT_ID, model_vars, 
+           GFAP_zscore, GFAP_outlier)) %>%
+  filter(GFAP_outlier == 0) %>%
+  select(-c(GFAP_outlier))
+
+data_champs_NFL <- data_champs_model %>%
+  select(c(SUBJECT_ID, model_vars, 
+           NFL_zscore, NFL_outlier)) %>%
+  filter(NFL_outlier == 0) %>%
+  select(-c(NFL_outlier))
+
+data_champs_PTAU181 <- data_champs_model %>%
+  select(c(SUBJECT_ID, model_vars, 
+           PTAU181_zscore, PTAU181_outlier)) %>%
+  filter(PTAU181_outlier == 0) %>%
+  select(-c(PTAU181_outlier))
+
+data_champs_AB42AB40 <- data_champs_model %>%
+  select(c(SUBJECT_ID, model_vars, 
+           AB42AB40_zscore, AB42AB40_outlier)) %>%
+  filter(AB42AB40_outlier == 0) %>%
+  select(-c(AB42AB40_outlier))
+
+data_champs_sTREM2 <- data_champs_model %>%
+  select(c(SUBJECT_ID, model_vars, 
+           sTREM2_zscore, sTREM2_outlier)) %>%
+  filter(sTREM2_outlier == 0) %>%
+  select(-c(sTREM2_outlier))
+
+data_champs_YKL40 <- data_champs_model %>%
+  select(c(SUBJECT_ID, model_vars, 
+           YKL40_zscore, YKL40_outlier)) %>%
+  filter(YKL40_outlier == 0) %>%
+  select(-c(YKL40_outlier))
 ```
 
-```{r save processed champs data, echo=FALSE}
-write.csv(data_champs_clean_analysis, here("processed-data/CHAMPS_clean_data.csv"))
-```
+### Low Intensity
 
-### AB42AB40
-
-#### Low Frequency
-
-```{r AB42AB40 low}
-AB42AB40_CHAMPS_data <- data_champs_clean_analysis |>
-  select(-c(PTAU181_zscore, NFL_zscore, YKL40_zscore, sTREM2_zscore, GFAP_zscore)) |>
-  filter(!is.na(AB42AB40_zscore))
-
-AB42AB40_CHAMPS_model_low <- lmer(AB42AB40_zscore ~ 
-    LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time,
-    data = AB42AB40_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(AB42AB40_CHAMPS_model_low)
-```
-
-##### Visualization
-
-```{r AB42AB40 low plot}
-AB42AB40_CHAMPS_data_plot <- AB42AB40_CHAMPS_data |>
-  filter(if_all(ends_with("_FREQ"), ~ !is.na(.))) |>
-  mutate(CHAMPS_group_low = ifelse(LOW_INT_FREQ_z >= median(LOW_INT_FREQ_z, na.rm = TRUE), 
-        "LOW_INT_FREQ >= median(LOW_INT_FREQ)", "LOW_INT_FREQ < median(LOW_INT_FREQ)")) 
-
-p1 <- ggplot(AB42AB40_CHAMPS_data_plot, aes(x = time, y = AB42AB40_zscore)) +
-  geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm", se = FALSE) +
-  facet_wrap(~ CHAMPS_group_low) + 
-  labs(title = "Standardized AB42AB40 Measure Over Time Since Baseline (years)",
-       x = "Time (Years since Baseline)",
-       y = "AB42AB40 zscore") +
-  theme_bw() +
-  theme(aspect.ratio = 1,
-      title = element_text(size = 10),
-      axis.title.x = element_text(size = 8),
-      axis.title.y = element_text(size = 8))
-p1
-```
-
-
-#### High Frequency
-
-```{r AB42AB40 high}
-AB42AB40_CHAMPS_model_high <- lmer(AB42AB40_zscore ~ 
-    HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time,
-    data = AB42AB40_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(AB42AB40_CHAMPS_model_high)
-```
-
-#### All Frequency
-
-```{r AB42AB40 all}
-AB42AB40_CHAMPS_model_all <- lmer(AB42AB40_zscore ~ 
-    ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time,
-    data = AB42AB40_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(AB42AB40_CHAMPS_model_all)
-```
-
-
-### PTAU181
-
-#### Low Frequency
-
-```{r PTAU181 low}
-PTAU181_CHAMPS_data <- data_champs_clean_analysis |>
-  select(-c(AB42AB40_zscore, YKL40_zscore, NFL_zscore, sTREM2_zscore, GFAP_zscore)) |>
-  filter(!is.na(PTAU181_zscore))
-
-PTAU181_CHAMPS_model_low <- lmer(PTAU181_zscore ~ 
-    LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time,
-    data = PTAU181_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(PTAU181_CHAMPS_model_low)
-```
-
-#### High Frequency
-
-```{r PTAU181 high}
-PTAU181_CHAMPS_model_high <- lmer(PTAU181_zscore ~ 
-    HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time,
-    data = PTAU181_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(PTAU181_CHAMPS_model_high)
-```
-
-#### All Frequency
-
-```{r PTAU181 all}
-PTAU181_CHAMPS_model_all <- lmer(PTAU181_zscore ~ 
-    ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time,
-    data = PTAU181_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(PTAU181_CHAMPS_model_all)
-```
-
-
-### NFL
-
-#### Low Frequency
-
-```{r NFL low}
-NFL_CHAMPS_data <- data_champs_clean_analysis |>
-  select(-c(PTAU181_zscore, AB42AB40_zscore, YKL40_zscore, sTREM2_zscore, GFAP_zscore)) |>
-  filter(!is.na(NFL_zscore))
-
-NFL_CHAMPS_model_low <- lmer(NFL_zscore ~ 
-    LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time,
-    data = NFL_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(NFL_CHAMPS_model_low)
-```
-
-#### High Frequency
-
-```{r NFL high}
-NFL_CHAMPS_model_high <- lmer(NFL_zscore ~ 
-    HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time,
-    data = NFL_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(NFL_CHAMPS_model_high)
-```
-
-
-#### All Frequency
-
-```{r NFL all}
-NFL_CHAMPS_model_all <- lmer(NFL_zscore ~ 
-    ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time,
-    data = NFL_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(NFL_CHAMPS_model_all)
-```
-
-
-### YKL40
-
-#### Low Frequency
-
-```{r YKL40 low}
-YKL40_CHAMPS_data <- data_champs_clean_analysis |>
-  select(-c(PTAU181_zscore, AB42AB40_zscore, NFL_zscore, sTREM2_zscore, GFAP_zscore)) |>
-  filter(!is.na(YKL40_zscore))
-
-YKL40_CHAMPS_model_low <- lmer(YKL40_zscore ~ 
-    LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time,
-    data = YKL40_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(YKL40_CHAMPS_model_low)
-```
-
-#### High Frequency
-
-```{r YKL40 high}
-YKL40_CHAMPS_model_high <- lmer(YKL40_zscore ~ 
-    HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time,
-    data = YKL40_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(YKL40_CHAMPS_model_high)
-```
-
-
-#### All Frequency
-
-```{r YKL40 all}
-YKL40_CHAMPS_model_all <- lmer(YKL40_zscore ~ 
-    ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time,
-    data = YKL40_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(YKL40_CHAMPS_model_all)
-```
-
-### sTREM2
-
-#### Low Frequency
-
-```{r sTREM2 low}
-sTREM2_CHAMPS_data <- data_champs_clean_analysis |>
-  select(-c(PTAU181_zscore, AB42AB40_zscore, NFL_zscore, YKL40_zscore, GFAP_zscore)) |>
-  filter(!is.na(sTREM2_zscore))
-
-sTREM2_CHAMPS_model_low <- lmer(sTREM2_zscore ~ 
-    LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time,
-    data = sTREM2_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(sTREM2_CHAMPS_model_low)
-```
-
-#### High Frequency
-
-```{r sTREM2 high}
-sTREM2_CHAMPS_model_high <- lmer(sTREM2_zscore ~ 
-    HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time,
-    data = sTREM2_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(sTREM2_CHAMPS_model_high)
-```
-
-#### All Frequency
-
-```{r sTREM2 all}
-sTREM2_CHAMPS_model_all <- lmer(sTREM2_zscore ~ 
-    ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time,
-    data = sTREM2_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(sTREM2_CHAMPS_model_all)
-```
-
-
-### GFAP
-
-#### Low Frequency
+#### GFAP
 
 ```{r GFAP low}
-GFAP_CHAMPS_data <- data_champs_clean_analysis |>
-  select(-c(PTAU181_zscore, AB42AB40_zscore, YKL40_zscore, NFL_zscore, sTREM2_zscore)) |>
-  filter(!is.na(GFAP_zscore))
-
-GFAP_CHAMPS_model_low <- lmer(GFAP_zscore ~ 
-    LOW_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + LOW_INT_FREQ_z:time,
-    data = GFAP_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(GFAP_CHAMPS_model_low)
+model_GFAP_low <- lmerTest::lmer(GFAP_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z + bl_low_z) + (1 + time | SUBJECT_ID), data = data_champs_GFAP)
+summary(model_GFAP_low)
 ```
 
-#### High Frequency
+#### NFL
 
-```{r GFAP high}
-GFAP_CHAMPS_model_high <- lmer(GFAP_zscore ~ 
-    HIGH_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + HIGH_INT_FREQ_z:time,
-    data = GFAP_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(GFAP_CHAMPS_model_high)
+```{r NFL low}
+model_NFL_low <- lmerTest::lmer(NFL_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z + bl_low_z) + (1 + time | SUBJECT_ID), data = data_champs_NFL)
+summary(model_NFL_low)
 ```
 
-##### Visualization
+#### PTAU181
 
-```{r GFAP high plot}
-GFAP_CHAMPS_data_plot <- GFAP_CHAMPS_data |>
-  filter(if_all(ends_with("_FREQ"), ~ !is.na(.))) |>
-  mutate(CHAMPS_group_high = ifelse(HIGH_INT_FREQ_z >= median(HIGH_INT_FREQ_z, na.rm = TRUE), 
-         "HIGH_INT_FREQ >= median(HIGH_INT_FREQ)", "HIGH_INT_FREQ < median(HIGH_INT_FREQ)"))
+```{r PTAU181 low}
+model_PTAU181_low <- lmerTest::lmer(PTAU181_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z + bl_low_z) + (1 + time | SUBJECT_ID), data = data_champs_PTAU181)
+summary(model_PTAU181_low)
+```
 
-p2 <- ggplot(GFAP_CHAMPS_data_plot, aes(x = time, y = GFAP_zscore)) +
-  geom_point(alpha = 0.5) +
-  geom_smooth(method = "lm", se = FALSE) +
-  facet_wrap(~ CHAMPS_group_high) + 
-  labs(title = "Standardized GFAP Measure Over Time Since Baseline (years)",
-       x = "Time (Years since Baseline)",
-       y = "GFAP zscore") +
-  theme_bw() +
-  theme(aspect.ratio = 1,
-      title = element_text(size = 10),
-      axis.title.x = element_text(size = 8),
-      axis.title.y = element_text(size = 8))
-p2
+In PTAU181 analysis, low intensity CHAMPS value is a predictor with a significance of 0.05.
+
+```{r PTAU181 low visual}
+median_int <- median(data_champs_PTAU181$bl_low_z, na.rm = TRUE)
+
+data_champs_PTAU181$int_group <- ifelse(data_champs_PTAU181$bl_low_z > median_int, "Above Median", "Below Median")
+
+plot_below <- ggplot(data_champs_PTAU181[data_champs_PTAU181$int_group == "Below Median",], aes(x = time, y = PTAU181_zscore)) +
+  geom_point(color = "blue") +
+  geom_smooth(color = "blue") +
+  labs(title = "Standardized Biomarker PTAU181 Values over Time \nSince Baseline (Below Median Low Intensity Value)",
+       x = "Time (years)",
+       y = "Standardized PTAU181 Score") +
+  theme_minimal()
+
+plot_above <- ggplot(data_champs_PTAU181[data_champs_PTAU181$int_group == "Above Median",], aes(x = time, y = PTAU181_zscore)) +
+  geom_point(color = "red") +
+  geom_smooth(color = "red") +
+  labs(title = "Standardized Biomarker PTAU181 Values over Time \nSince Baseline (Above Median Low Intensity Value)",
+       x = "Time (years)",
+       y = "Standardized PTAU181 Score") +
+  theme_minimal()
+grid.arrange(plot_below, plot_above, ncol = 2)
+```
+
+#### AB42AB40
+
+```{r AB42AB40 low}
+model_AB42AB40_low <- lmerTest::lmer(AB42AB40_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z + bl_low_z) + (1 + time | SUBJECT_ID), data = data_champs_AB42AB40)
+summary(model_AB42AB40_low)
+```
+
+#### sTREM2
+
+```{r sTREM2 low}
+model_sTREM2_low <- lmerTest::lmer(sTREM2_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z + bl_low_z) + (1 + time | SUBJECT_ID), data = data_champs_sTREM2)
+summary(model_sTREM2_low)
+```
+
+#### YKL40
+
+```{r YKL40 low}
+model_YKL40_low <- lmerTest::lmer(YKL40_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z + bl_low_z) + (1 + time | SUBJECT_ID), data = data_champs_YKL40)
+summary(model_YKL40_low)
+```
+
+### High Intensity
+
+#### GFAP
+
+```{r GFAP high} 
+model_GFAP_high <- lmerTest::lmer(GFAP_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z + bl_high_z) + (1 + time | SUBJECT_ID), data = data_champs_GFAP)
+summary(model_GFAP_high)
+```
+
+#### NFL
+
+```{r NFL high}
+model_NFL_high <- lmerTest::lmer(NFL_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z + bl_high_z) + (1 + time | SUBJECT_ID), data = data_champs_NFL)
+summary(model_NFL_high)
+```
+
+In NFL analysis, the interaction of high intensity CHAMPS value with time is a predictor with a significance of 0.01.
+
+```{r NFl high visual}
+median_int <- median(data_champs_NFL$bl_high_z, na.rm = TRUE)
+
+data_champs_NFL$int_group <- ifelse(data_champs_NFL$bl_high_z > median_int, "Above Median", "Below Median")
+
+plot_below <- ggplot(data_champs_NFL[data_champs_NFL$int_group == "Below Median",], aes(x = time, y = NFL_zscore)) +
+  geom_point(color = "blue") +
+  geom_smooth(color = "blue") +
+  labs(title = "Standardized Biomarker NFL Values over Time \nSince Baseline (Below Median High Intensity Value)",
+       x = "Time (years)",
+       y = "Standardized NFL Score") +
+  theme_minimal()
+
+plot_above <- ggplot(data_champs_NFL[data_champs_NFL$int_group == "Above Median",], aes(x = time, y = NFL_zscore)) +
+  geom_point(color = "red") +
+  geom_smooth(color = "red") +
+  labs(title = "Standardized Biomarker NFL Values over Time \nSince Baseline (Above Median High Intensity Value)",
+       x = "Time (years)",
+       y = "Standardized NFL Score") +
+  theme_minimal()
+grid.arrange(plot_below, plot_above, ncol = 2)
+```
+
+#### PTAU181
+
+```{r PTAU181 high}
+model_PTAU181_high <- lmerTest::lmer(PTAU181_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z + bl_high_z) + (1 + time | SUBJECT_ID), data = data_champs_PTAU181)
+summary(model_PTAU181_high)
+```
+
+#### AB42AB40
+
+```{r AB42AB40 high}
+model_AB42AB40_high <- lmerTest::lmer(AB42AB40_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z + bl_high_z) + (1 + time | SUBJECT_ID), data = data_champs_AB42AB40)
+summary(model_AB42AB40_high)
+```
+
+#### sTREM2
+
+```{r sTREM2 high}
+model_sTREM2_high <- lmerTest::lmer(sTREM2_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z + bl_high_z) + (1 + time | SUBJECT_ID), data = data_champs_sTREM2)
+summary(model_sTREM2_high)
+```
+
+#### YKL40
+
+```{r YKL40 high}
+model_YKL40_high <- lmerTest::lmer(YKL40_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z+ bl_high_z) + (1 + time | SUBJECT_ID), data = data_champs_YKL40)
+summary(model_YKL40_high)
+```
+
+### All Intensity
+
+#### GFAP
+
+```{r GFAP all}
+model_GFAP_all <- lmerTest::lmer(GFAP_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z + bl_all_z) + (1 + time | SUBJECT_ID), data = data_champs_GFAP)
+summary(model_GFAP_all)
+```
+
+#### NFL
+
+```{r NFL all}
+model_NFL_all <- lmerTest::lmer(NFL_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z + bl_all_z) + (1 + time | SUBJECT_ID), data = data_champs_NFL)
+summary(model_NFL_all)
+```
+
+In NFL analysis, the interaction of all intensity CHAMPS value with time is a predictor with a significance of 0.01.
+
+```{r NFL all visual}
+median_int <- median(data_champs_NFL$bl_all_z, na.rm = TRUE)
+
+data_champs_NFL$int_group <- ifelse(data_champs_NFL$bl_all_z > median_int, "Above Median", "Below Median")
+
+plot_below <- ggplot(data_champs_NFL[data_champs_NFL$int_group == "Below Median",], aes(x = time, y = NFL_zscore)) +
+  geom_point(color = "blue") +
+  geom_smooth(color = "blue") +
+  labs(title = "Standardized Biomarker NFL Values over Time \nSince Baseline (Below Median All Intensity Value)",
+       x = "Time (years)",
+       y = "Standardized NFL Score") +
+  theme_minimal()
+
+plot_above <- ggplot(data_champs_NFL[data_champs_NFL$int_group == "Above Median",], aes(x = time, y = NFL_zscore)) +
+  geom_point(color = "red") +
+  geom_smooth(color = "red") +
+  labs(title = "Standardized Biomarker NFL Values over Time \nSince Baseline (Above Median All Intensity Value)",
+       x = "Time (years)",
+       y = "Standardized NFL Score") +
+  theme_minimal()
+grid.arrange(plot_below, plot_above, ncol = 2)
 ```
 
 
-#### All Frequency
+#### PTAU181
 
-```{r GFAL all}
-GFAP_CHAMPS_model_all <- lmer(GFAP_zscore ~ 
-    ALL_INT_FREQ_z + Age_CHAMPS_z + Sex_F + APOE4 + BMI_z + time + 
-      (1 | SUBJECT_ID) + ALL_INT_FREQ_z:time,
-    data = GFAP_CHAMPS_data, 
-    control = lmerControl(optimizer = "bobyqa"))
-
-summary(GFAP_CHAMPS_model_all)
+```{r PTAU181 all}
+model_PTAU181_all <- lmerTest::lmer(PTAU181_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z + bl_all_z) + (1 + time | SUBJECT_ID), data = data_champs_PTAU181)
+summary(model_PTAU181_all)
 ```
 
+#### AB42AB40
+
+```{r AB42AB40 all}
+model_AB42AB40_all <- lmerTest::lmer(AB42AB40_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z + bl_all_z) + (1 + time | SUBJECT_ID), data = data_champs_AB42AB40)
+summary(model_AB42AB40_all)
+```
+
+#### sTREM2
+
+```{r sTREM2 all}
+model_sTREM2_all <- lmerTest::lmer(sTREM2_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z + bl_all_z) + (1 + time | SUBJECT_ID), data = data_champs_sTREM2)
+summary(model_sTREM2_all)
+```
+
+#### YKL40
+
+```{r YKL40 all}
+model_YKL40_all <- lmerTest::lmer(YKL40_zscore ~ time * (Age_CHAMPS_z + bl_sex + bl_APOE4 + bl_BMI_z + bl_all_z) + (1 + time | SUBJECT_ID), data = data_champs_YKL40)
+summary(model_YKL40_all)
+```

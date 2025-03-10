@@ -1,0 +1,352 @@
+---
+title: "BIOCARD Data Clean"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, comment = NA,
+                      fig.align = "center", fig.height = 6, fig.width = 12)
+library(readxl)
+library(tidyverse)
+library(mice)
+library(knitr)
+library(here)
+library(kableExtra)
+```
+
+
+# Load Raw Data
+
+```{r load raw data}
+# Load raw data
+raw_demo <- read_excel(here("data/BIOCARD_Demographics_2024.08.07_Deidentified.xlsx"), sheet = "BIOCARD_Demographics")
+raw_dx <- read_excel(here("data/BIOCARD_DiagnosisData_2024.09.08_Deidentified.xlsx"), sheet = "BIOCARD_DiagnosisData")
+raw_act <- read_excel(here("data/actigraphy_data_BIOCARD_8_7_24_from Daniel_Deidentified.xlsx"), sheet = "actigraphy_data_BIOCARD_8_7_24")
+raw_gene <- read_excel(here("data/BIOCARD_Genetics_Data_2023.03.28_Deidentified.xlsx"), sheet = "GENETICS_Data")
+raw_champs <- read_excel(here("data/BIOCARD_Leisure_Activity_Champs_2023.09.10_other coded_Deidentified.xlsx"), sheet = "BIOCARD_PA_BloodBiomarkers-CHAM")
+# NTK often stands for NeuroToolKit. NTK is a set of biomarkers used for neurological and neurodegenerative disease research
+raw_ntk <- read_excel(here("data/BIOCARD_NTK Blood biomarkers_08.09.24_JHU only.xlsx"), sheet = "NTK Datafile to Use_JHU only")
+raw_vital <- read_excel(here("data/BIOCARD_Vital_Signs_Sensory_2023.04.17_Deidentified.xlsx"), sheet = "BIOCARD_VITAL_SIGNS_SENSORY")
+raw_gene_new <- read_excel(here("data/New participants_BIOCARD ApoE Genotypes 2023-2024_Deidentified.xlsx"), sheet = "Sheet1")
+```
+
+# Clean Raw Data
+
+```{r data clean}
+# Demographics data
+# Sex: 1=Male|2=Female
+# Educ: years of education, 12=Min|20=Max|99=Unknown|Blank
+#   no unknown or missing
+# Race: 1=White|2=Black or African American|3=American Indian or Alaska Native|4=Native Hawaiian or Other Pacific Islander|5=Asian|99=Unknown|Blank
+#   no 4 or missing
+# Sex_F: 1=F|0=M
+# Race_White: 1=White|0=Other|99=Missing
+data_demo <- raw_demo %>%
+  select(SUBJECT_ID, SEX, EDUC, RACE) %>%
+  mutate(Sex_F = ifelse(SEX == 2, 1, 0)) %>% 
+  mutate(Race_White = case_when(
+    RACE == 1 ~ 1,
+    RACE %in% c(2,3,4,5) ~ 0,
+    TRUE ~ 99
+  )) %>%
+  select(SUBJECT_ID, Sex_F, Race_White, EDUC) %>%
+  mutate(in_demo = 1)
+# check data
+# data_demo %>% 
+#   select(EDUC, Race_White, Sex_F) %>%
+#   table()
+# data_demo$SUBJECT_ID[duplicated(data_demo$SUBJECT_ID)] 
+# length(unique(data_demo$SUBJECT_ID)) 
+# 474 subjects
+
+# Diagnosis data
+# fup_Dx: 1 if last available (i.e., most recent) ‘DIAGNOSIS’ = MCI or dementia, otherwise 0
+data_dx <- raw_dx %>%
+  select(SUBJECT_ID, VISITNO, AgeAtVisit, DIAGNOSIS, DECAGE) %>%
+  group_by(SUBJECT_ID) %>% 
+  mutate(last_visit = ifelse(AgeAtVisit == max(AgeAtVisit), 1, 0)) %>%
+  ungroup() %>%
+  mutate(fup_Dx = ifelse(DIAGNOSIS %in% c("DEMENTIA", "MCI") & last_visit == 1, 1, 0)) %>%
+  mutate(in_dx = 1)
+# check data
+# table(data_dx$DIAGNOSIS)
+# DEMENTIA, IMPAIRED NOT MCI, MCI, NORMAL 
+# length(unique(data_dx$SUBJECT_ID))
+# 474 subjects
+
+# Blood biomarkers data
+data_ntk <- raw_ntk %>%
+  select(SUBJECT_ID, VISITNO,
+         PTAU181_zscore, AB42AB40_zscore, # AD-specific measures
+         NFL_zscore, YKL40_zscore, sTREM2_zscore, GFAP_zscore, # AD non-specific measures
+         PTAU181_outlier, AB42AB40_outlier, NFL_outlier, YKL40_outlier, sTREM2_outlier, GFAP_outlier,
+         GFAP, NFL, PTAU181, AB42AB40, PTAU181_AB42AB40, sTREM2, YKL40) %>% # outlier indicators for each biomarker measure 
+  mutate(in_ntk = 1)
+# check data
+# length(unique(data_ntk$SUBJECT_ID))
+# 266 subjects
+
+# CHAMPS activity questionnaire data
+low_freq_vars <- c("B11110a_freq", "B11120a_freq", "B11122a_freq", "B11127a_freq", "B11128a_freq", "B11134a_freq", "B11135a_freq", "B11139a_freq")
+high_freq_vars <- c("B11107a_freq", "B11109a_freq", "B11114a_freq", "B11115a_freq", "B11116a_freq", "B11119a_freq", "B11121a_freq", "B11123a_freq", "B11124a_freq", "B11125a_freq", "B11126a_freq", "B11129a_freq", "B11130a_freq", "B11131a_freq", "B11132a_freq", "B11133a_freq", "B11136a_freq", "B11137a_freq", "B11138a_freq", "B11140a_freq")
+# Create three continuous variables reflecting each participant’s frequency of engagement in low intensity physical activities, high intensity physical activities, and all physical activities (regardless of level of intensity)
+data_champs <- raw_champs %>%
+  select(c(SUBJECT_ID, VISITNO, low_freq_vars, high_freq_vars, "B11141a_freq", "B11141s_CAT")) %>%
+  mutate(across(all_of(c(low_freq_vars, high_freq_vars, "B11141a_freq")), as.numeric)) %>%  
+  mutate(
+    LOW_INT_FREQ = rowSums(select(., all_of(low_freq_vars)), na.rm = TRUE) +
+                   ifelse(!is.na(B11141s_CAT) & B11141s_CAT == "Physical-low", B11141a_freq, 0),
+    HIGH_INT_FREQ = rowSums(select(., all_of(high_freq_vars)), na.rm = TRUE) +
+                    ifelse(!is.na(B11141s_CAT) & B11141s_CAT == "Physical-modhi", B11141a_freq, 0),
+    ALL_INT_FREQ = LOW_INT_FREQ + HIGH_INT_FREQ
+  ) %>%
+  select(SUBJECT_ID, VISITNO, LOW_INT_FREQ, HIGH_INT_FREQ, ALL_INT_FREQ) %>%
+  mutate(in_champs = 1) %>%
+  group_by(SUBJECT_ID) %>% 
+  mutate(first_champs_visit = ifelse(VISITNO == min(VISITNO), 1, 0))
+# check data
+# length(unique(data_champs$SUBJECT_ID))
+# 259 subjects
+
+# Actigraphy data
+# LTAC10 total average activity counts over the 10 most active hours of the day, averaged across 3 days with valid data
+data_act <- raw_act %>%
+  select(SUBJECT_ID, VISITNO, LTAC10) %>%
+  mutate(in_act = 1) %>%
+  group_by(SUBJECT_ID) %>% 
+  mutate(first_act_visit = ifelse(VISITNO == min(VISITNO), 1, 0))
+# check data
+# length(unique(data_act$SUBJECT_ID))
+# 240 subjects
+
+# Genetics (APOE genetic status) data
+data_gene_new <- raw_gene_new %>%
+  filter(!is.na(SUBJECT_ID)) %>%
+  mutate(APOECODE = APOECODE/10)
+
+data_gene <- raw_gene %>%
+  rbind(data_gene_new) %>%
+  mutate(APOE4 = case_when(
+      APOECODE %in% c(2.2, 2.3, 3.3) ~ 0,  
+      APOECODE %in% c(2.4, 3.4, 4.4) ~ 1,  
+      APOECODE == "" | is.na(APOECODE) ~ NA_real_ 
+    )) %>%
+  mutate(in_gene = 1)
+# check data
+# length(unique(data_gene$SUBJECT_ID))
+# 467 subjects
+
+# Vital signs/ sensory data
+# use self-reported BMI if measured BMI is not available
+data_vital <- raw_vital %>%
+  select(SUBJECT_ID, VISITNO, BMI, BMISR) %>%
+  rename(BMI_measured = BMI) %>%
+  mutate(in_vital = 1) %>%
+  mutate(BMI = ifelse(is.na(BMI_measured), BMISR, BMI_measured)) %>%
+  select(-c(BMI_measured, BMISR))
+# check data
+# length(unique(data_vital$SUBJECT_ID))
+# 394 subjects
+```
+
+# Merge Data
+
+```{r}
+# format variables to merge on
+format_columns <- c("SUBJECT_ID","VISITNO")
+data_dx[format_columns] <- lapply(data_dx[format_columns], as.numeric) 
+data_act[format_columns] <- lapply(data_act[format_columns], as.numeric) 
+
+# biomarker variables
+ntk_vars = c("PTAU181_zscore", "AB42AB40_zscore", "NFL_zscore", "YKL40_zscore",
+             "sTREM2_zscore", "GFAP_zscore", "PTAU181_outlier", "AB42AB40_outlier",
+             "NFL_outlier", "YKL40_outlier", "sTREM2_outlier", "GFAP_outlier", 
+             "in_ntk",
+             "PTAU181", "AB42AB40", "NFL", "YKL40", "sTREM2", "GFAP", "PTAU181_AB42AB40")
+```
+
+### CHAMPS Measurement
+
+```{r}
+data_champs_merged <- data_champs %>%
+  merge(data_dx, by = c("SUBJECT_ID", "VISITNO"), all = TRUE) %>%
+  merge(data_ntk, by = c("SUBJECT_ID", "VISITNO"), all = TRUE) %>%
+  merge(data_vital, by = c("SUBJECT_ID", "VISITNO"), all = TRUE) %>%
+  merge(data_demo, by = "SUBJECT_ID", all = TRUE) %>%
+  merge(data_gene, by = "SUBJECT_ID", all = TRUE) %>%
+  arrange(SUBJECT_ID, VISITNO)
+# 474 patients
+
+# Identify patients with MCI or Dementia at the first CHAMPS visit
+excluded_patients <- data_champs_merged %>%
+  filter(first_champs_visit == 1 & (DIAGNOSIS == "MCI" | DIAGNOSIS == "DEMENTIA")) %>%
+  pull(SUBJECT_ID)
+# 39 patients
+
+# check if a participant has at least one CHAMPS assessment
+# define Age_CHAMPS as a participant’s age at their baseline/first available CHAMPS assessment 
+# exclude patients with a diagnosis of MCI or dementia at baseline CHAMPS assessment
+data_champs_clean <- data_champs_merged %>%
+  group_by(SUBJECT_ID) %>%
+  filter(any(in_champs == 1)) %>%
+  mutate(Age_CHAMPS = ifelse(first_champs_visit == 1, AgeAtVisit, NA)) %>%
+  fill(Age_CHAMPS, .direction = "downup") %>%
+  filter(!SUBJECT_ID %in% excluded_patients) %>%
+  ungroup() 
+# length(unique(data_champs_clean$SUBJECT_ID))
+# 220 patients
+
+# Identify patients without biomarker info 1.5 years around baseline CHAMPS visit
+no_ntk_at_baseline_visit <- data_champs_clean %>%
+  filter(first_champs_visit == 1 & is.na(in_ntk)) %>%
+  pull(SUBJECT_ID)
+# 52 patients don't have biomarker info at the baseline visit
+# 9 out of 52 patients are diagnosed with MCI or Dementia at baseline
+
+ntk_within_window_patients <- data_champs_clean %>%
+  filter(SUBJECT_ID %in% no_ntk_at_baseline_visit) %>%
+  mutate(ntk_within_window = ifelse(
+      (abs(AgeAtVisit - Age_CHAMPS) <= 1.5) &
+      !is.na(in_ntk), 
+    1, 0
+  ))  %>%
+  filter(ntk_within_window == 1) %>%
+  select(c(SUBJECT_ID, AgeAtVisit, all_of(ntk_vars))) %>%
+  group_by(SUBJECT_ID) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  mutate(first_champs_visit = 1) %>%
+  mutate(Age_NTK_bl = AgeAtVisit)
+# 4 patients
+
+data_champs_clean <- data_champs_clean %>%
+  filter(!(SUBJECT_ID %in% no_ntk_at_baseline_visit) | 
+           SUBJECT_ID %in% ntk_within_window_patients$SUBJECT_ID) %>%
+  # only include visits from baseline forward for each patient
+  group_by(SUBJECT_ID) %>%
+  mutate(baseline_forward = ifelse(first_champs_visit == 1, 1, NA)) %>%
+  fill(baseline_forward, .direction = "down") %>%
+  filter(baseline_forward == 1)  %>%
+  # update biomarker info for patients with missing biomarker at baseline
+  merge(ntk_within_window_patients, all.x = TRUE, 
+        by = c("SUBJECT_ID", "first_champs_visit"), suffix = c("_left", "_right")) %>%
+   mutate(
+    across(
+      .cols = ends_with("_left"),  
+      .fns = ~ ifelse(!is.na(.), ., get(str_remove(cur_column(), "_left") %>% paste0("_right"))),  
+      .names = "{str_remove(.col, '_left')}"  
+    )
+  )%>%
+  select(-ends_with("_left"), -ends_with("_right")) %>%
+  mutate(Age_NTK_bl = ifelse(!is.na(Age_NTK_bl), Age_NTK_bl, AgeAtVisit)) %>%
+  # only include visits with biomarker information
+  filter(in_ntk == 1)
+# length(unique(data_champs_clean$SUBJECT_ID))
+# 181 patients, 750 visits
+
+data_champs_clean <- data_champs_clean %>%
+  arrange(SUBJECT_ID, VISITNO)
+
+# only contain baseline info for each patient
+# calculate follow up time 
+data_champs_clean_bl <- data_champs_clean %>%
+  group_by(SUBJECT_ID) %>%
+  mutate(follow_up_time = max(AgeAtVisit) - Age_CHAMPS) %>%
+  fill(follow_up_time, .direction = "downup") %>%
+  mutate(n_ntk = n()) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+
+data_champs_clean <- data_champs_clean %>%
+  arrange(SUBJECT_ID, VISITNO)
+
+write.csv(data_champs_clean, here("processed-data/CHAMPS_clean_data.csv"))
+```
+
+### Actigraphy Measurement
+
+```{r}
+data_act_merged <- data_act %>%
+  merge(data_dx, by = c("SUBJECT_ID", "VISITNO"), all = TRUE) %>%
+  merge(data_ntk, by = c("SUBJECT_ID", "VISITNO"), all = TRUE) %>%
+  merge(data_vital, by = c("SUBJECT_ID", "VISITNO"), all = TRUE) %>%
+  merge(data_demo, by = "SUBJECT_ID", all = TRUE) %>%
+  merge(data_gene, by = "SUBJECT_ID", all = TRUE) %>%
+  arrange(SUBJECT_ID, VISITNO)
+# 474 patients
+
+# Identify patients with MCI or Dementia at the first Actigraphy visit
+excluded_patients <- data_act_merged %>%
+  filter(first_act_visit == 1 & (DIAGNOSIS == "MCI" | DIAGNOSIS == "DEMENTIA")) %>%
+  pull(SUBJECT_ID)
+# 27 patients
+
+# Include patients in the CHAMPS analysis
+# Include patients with at least one actigraphy assessment
+# define Age_Act as a participant’s age at their baseline/first available Actigraphy assessment 
+# exclude patients with a diagnosis of MCI or dementia at baseline Actigraphy assessment
+data_act_clean <- data_act_merged %>%
+  filter(SUBJECT_ID %in% data_champs_clean$SUBJECT_ID) %>%
+  group_by(SUBJECT_ID) %>%
+  filter(any(in_act == 1)) %>%
+  mutate(Age_Act = ifelse(first_act_visit == 1, AgeAtVisit, NA)) %>%
+  fill(Age_Act, .direction = "downup") %>%
+  filter(!SUBJECT_ID %in% excluded_patients) %>%
+  ungroup() 
+# length(unique(data_act_clean$SUBJECT_ID))
+# 160 patients
+
+# Identify patients without biomarker info 1.5 years around baseline Actigraphy visit
+no_ntk_at_baseline_visit <- data_act_clean %>%
+  filter(first_act_visit == 1 & is.na(in_ntk)) %>%
+  pull(SUBJECT_ID)
+# 8 patients don't have biomarker info at the baseline visit
+# 1 out of 8 patients are diagnosed with MCI or Dementia at baseline
+
+ntk_within_window_patients <- data_act_clean %>%
+  filter(SUBJECT_ID %in% no_ntk_at_baseline_visit) %>%
+  mutate(ntk_within_window = ifelse(
+      (abs(AgeAtVisit - Age_Act) <= 1.5) &
+      !is.na(in_ntk), 
+    1, 0
+  )) %>%
+  filter(ntk_within_window == 1) %>%
+  select(c(SUBJECT_ID, AgeAtVisit,all_of(ntk_vars))) %>%
+  group_by(SUBJECT_ID) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  mutate(first_act_visit = 1) %>%
+  mutate(Age_NTK_bl = AgeAtVisit)
+# 4 patients
+
+data_act_clean <- data_act_clean %>%
+  filter(!(SUBJECT_ID %in% no_ntk_at_baseline_visit) | 
+           SUBJECT_ID %in% ntk_within_window_patients$SUBJECT_ID) %>%
+  # only include visits from baseline forward for each patient
+  group_by(SUBJECT_ID) %>%
+  mutate(baseline_forward = ifelse(first_act_visit == 1, 1, NA)) %>%
+  fill(baseline_forward, .direction = "down") %>%
+  filter(baseline_forward == 1) %>%
+  # update biomarker info for patients with missing biomarker at baseline
+  merge(ntk_within_window_patients, all.x = TRUE, 
+        by = c("SUBJECT_ID", "first_act_visit"), suffix = c("_left", "_right")) %>%
+   mutate(
+    across(
+      .cols = ends_with("_left"),  
+      .fns = ~ ifelse(!is.na(.), ., get(str_remove(cur_column(), "_left") %>% paste0("_right"))),  
+      .names = "{str_remove(.col, '_left')}"  
+    )
+  )%>%
+  select(-ends_with("_left"), -ends_with("_right")) %>%
+  mutate(Age_NTK_bl = ifelse(!is.na(Age_NTK_bl), Age_NTK_bl, AgeAtVisit)) %>%
+  # only include visits with biomarker information
+  filter(in_ntk == 1)
+# length(unique(data_act_clean$SUBJECT_ID))
+# 157 patients, 431 visits
+
+data_act_clean <- data_act_clean %>%
+  arrange(SUBJECT_ID, VISITNO)
+
+write.csv(data_act_clean, here("processed-data/Actigraphy_clean_data.csv"))
+```
