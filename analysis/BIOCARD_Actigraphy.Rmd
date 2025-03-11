@@ -9,7 +9,7 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(message = FALSE, warning = FALSE, comment = NA,
-                      fig.align = "center", fig.height = 6, fig.width = 12)
+                      fig.align = "center")
 library(readxl)
 library(tidyverse)
 library(mice)
@@ -26,12 +26,23 @@ library(lmerTest) # mixed linear model
 ```{r descriptive analysis}
 data_act_clean <- read.csv(here("processed-data/Actigraphy_clean_data.csv"), 
                            row.names = 1, check.names = FALSE)
+data_champs_clean <- read.csv(here("processed-data/CHAMPS_clean_data.csv"), 
+                              row.names = 1, check.names = FALSE)
+raw_vital <- read_excel(here("data/BIOCARD_Vital_Signs_Sensory_2023.04.17_Deidentified.xlsx"), sheet = "BIOCARD_VITAL_SIGNS_SENSORY")
 
 # only contain baseline info for each patient
 # calculate follow up time
 data_act_clean_bl <- data_act_clean %>%
   group_by(SUBJECT_ID) %>%
   mutate(follow_up_time = max(AgeAtVisit) - Age_Act) %>%
+  fill(follow_up_time, .direction = "downup") %>%
+  mutate(n_ntk = n()) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+
+data_champs_clean_bl <- data_champs_clean %>%
+  group_by(SUBJECT_ID) %>%
+  mutate(follow_up_time = max(AgeAtVisit) - Age_CHAMPS) %>%
   fill(follow_up_time, .direction = "downup") %>%
   mutate(n_ntk = n()) %>%
   slice_head(n = 1) %>%
@@ -108,7 +119,9 @@ summary_stats <- data.frame(
   Mean_GFAP = sprintf("%.2f (%.2f)", mean(data_act_clean_bl[data_act_clean_bl$GFAP_outlier==0,]$GFAP, na.rm = TRUE), sd(data_act_clean_bl[data_act_clean_bl$GFAP_outlier==0,]$GFAP, na.rm = TRUE)),
   
   # Mean (SD) NFL at baseline CHAMPS
-  Mean_NFL = sprintf("%.2f (%.2f)", mean(data_act_clean_bl[data_act_clean_bl$NFL_outlier==0,]$NFL, na.rm = TRUE), sd(data_act_clean_bl[data_act_clean_bl$NFL_outlier==0,]$NFL, na.rm = TRUE)),
+  Mean_NFL = sprintf("%.2f (%.2f)", 
+      mean(data_act_clean_bl[data_act_clean_bl$NFL_outlier==0,]$NFL, na.rm = TRUE),
+      sd(data_act_clean_bl[data_act_clean_bl$NFL_outlier==0,]$NFL, na.rm = TRUE)),
   
   # Mean (SD) PTAU181 at baseline CHAMPS
   Mean_PTAU181 = sprintf("%.2f (%.2f)", mean(data_act_clean_bl[data_act_clean_bl$PTAU181_outlier==0,]$PTAU181, na.rm = TRUE), sd(data_act_clean_bl[data_act_clean_bl$PTAU181_outlier==0,]$PTAU181, na.rm = TRUE)),
@@ -166,6 +179,27 @@ summary_stats %>%
 
 # Model Analysis
 
+### Model Specification
+
+The linear mixed-effects model used in this analysis is specified as follows:
+
+$$
+Y_{ij} = \beta_0 + \beta_1 \text{time}_{ij} + \beta_2 \text{Age_Act}_i + \beta_3 \text{Sex_F}_i + \beta_4 \text{APOE4}_i + \beta_5 \text{BMI}_i + \beta_6 \text{Act}_i
++ \\ \beta_7 (\text{time}_{ij} \times \text{Age_Act}_i) + \beta_8 (\text{time}_{ij} \times \text{Sex_F}_i) + \beta_9 (\text{time}_{ij} \times \text{APOE4}_i) + \beta_{10} (\text{time}_{ij} \times \text{BMI}_i) + \beta_{11} (\text{time}_{ij} \times \text{Act}_i) \\
++ u_{0i} + u_{1i} \text{time}_{ij} + \epsilon_{ij}
+$$
+
+Where:
+
+-   $Y_{ij}$ is the biomarker outcome for participant $i$ at time $j$.
+-   $\beta_0$ is the fixed intercept.
+-   $\beta_1, \dots, \beta_{11}$ are the fixed effect coefficients.
+-   $u_{0i} \sim N(0, \sigma^2_u)$ is the random intercept for subject $i$.
+-   $u_{1i} \sim N(0, \sigma^2_v)$ is the random slope for time for subject $i$.
+-   $\epsilon_{ij} \sim N(0, \sigma^2)$ is the residual error.
+
+### Data Preparation
+
 ```{r model analysis act data prep}
 data_act_clean_analysis <- data_act_clean |>
   mutate(time = AgeAtVisit - Age_Act, 
@@ -195,7 +229,7 @@ data_act_clean_analysis <- data_act_clean |>
 write.csv(data_act_clean_analysis, here("processed-data/Actigraphy_clean_data.csv"))
 ```
 
-## Data Visualizations
+### Data Visualizations
 
 Z score by sex for blood biomarkers
 
@@ -262,7 +296,6 @@ AB42AB40_act_model <- lmer(AB42AB40_zscore ~
 
 summary(AB42AB40_act_model)
 ```
-
 
 ### PTAU181
 
@@ -338,3 +371,7 @@ GFAP_act_model <- lmer(GFAP_zscore ~
 
 summary(GFAP_act_model)
 ```
+
+### Summary
+
+![](images/summarytable_act.png)
